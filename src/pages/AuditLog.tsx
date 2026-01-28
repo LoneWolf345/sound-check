@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useUser } from '@/contexts/UserContext';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Loader2, FileText } from 'lucide-react';
@@ -32,7 +32,7 @@ function getActionBadgeVariant(action: string): 'default' | 'secondary' | 'destr
 }
 
 export default function AuditLog() {
-  const { isAdmin } = useUser();
+  const { isAdmin } = useAuthContext();
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [actionFilter, setActionFilter] = useState<string>('all');

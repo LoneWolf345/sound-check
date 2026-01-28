@@ -11,6 +11,7 @@ import {
   Menu,
   X,
   AudioWaveform,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,7 +20,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useUser } from '@/contexts/UserContext';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { useState } from 'react';
 
 const navItems = [
@@ -35,7 +36,7 @@ const adminItems = [
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { user, users, setUser, isAdmin } = useUser();
+  const { internalUser, internalUsers, switchUser, isAdmin, isLoading, isSwitching } = useAuthContext();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -103,9 +104,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {/* User Switcher */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-2">
-                <User className="h-4 w-4" />
-                <span className="hidden sm:inline">{user?.name}</span>
+              <Button variant="ghost" className="gap-2" disabled={isSwitching}>
+                {isSwitching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <User className="h-4 w-4" />
+                )}
+                <span className="hidden sm:inline">
+                  {isLoading ? 'Loading...' : internalUser?.name ?? 'Sign In'}
+                </span>
                 {isAdmin && (
                   <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
                     Admin
@@ -115,13 +122,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 bg-popover">
-              {users.map((u) => (
+              {internalUsers.map((u) => (
                 <DropdownMenuItem
-                  key={u.id}
-                  onClick={() => setUser(u)}
+                  key={u.email}
+                  onClick={() => switchUser(u.email)}
+                  disabled={isSwitching}
                   className={cn(
                     'flex items-center justify-between',
-                    u.id === user?.id && 'bg-accent'
+                    u.email === internalUser?.email && 'bg-accent'
                   )}
                 >
                   <span>{u.name}</span>

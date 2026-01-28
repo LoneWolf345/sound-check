@@ -26,7 +26,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { useToast } from '@/hooks/use-toast';
-import { useUser } from '@/contexts/UserContext';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { isValidMacAddress, isValidIpAddress, formatDurationFromMinutes, formatCadence, convertToMinutes } from '@/lib/format';
 import { mockValidateAccount, type MockBillingAccount } from '@/lib/mock-data';
 import { useCreateJob, checkUsageLimits, checkDuplicateRunningJob } from '@/hooks/use-jobs';
@@ -61,7 +61,7 @@ type JobFormValues = z.infer<typeof jobFormSchema>;
 export default function CreateJob() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useUser();
+  const { internalUser: user } = useAuthContext();
   const [isValidating, setIsValidating] = useState(false);
   const [accountData, setAccountData] = useState<MockBillingAccount | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);

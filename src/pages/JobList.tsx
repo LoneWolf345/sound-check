@@ -34,7 +34,7 @@ import {
 import { formatDateTime, formatDurationFromMinutes } from '@/lib/format';
 import { useJobs, useCancelJob } from '@/hooks/use-jobs';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
-import { useUser } from '@/contexts/UserContext';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { stopSimulator } from '@/lib/ping-simulator';
 import type { Job, JobStatus } from '@/types';
@@ -57,7 +57,7 @@ function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'de
 export default function JobList() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useUser();
+  const { internalUser: user } = useAuthContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'all'>('all');
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
