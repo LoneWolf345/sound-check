@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/form';
 import { useToast } from '@/hooks/use-toast';
 import { useUser } from '@/contexts/UserContext';
-import { isValidMacAddress, isValidIpAddress, formatDurationFromMinutes, formatCadence } from '@/lib/format';
+import { isValidMacAddress, isValidIpAddress, formatDurationFromMinutes, formatCadence, convertToMinutes } from '@/lib/format';
 import { mockValidateAccount, type MockBillingAccount } from '@/lib/mock-data';
 import { useCreateJob, checkUsageLimits } from '@/hooks/use-jobs';
 import { useAdminConfig } from '@/hooks/use-admin-config';
@@ -71,10 +71,19 @@ export default function CreateJob() {
   const { data: adminConfig } = useAdminConfig();
 
   // Get presets from admin config or use defaults
-  const durationPresets = adminConfig?.durationPresets ?? {
-    presets: [60, 180, 360, 720, 1440, 2880],
+  const durationPresetsConfig = adminConfig?.durationPresets ?? {
+    presets: [
+      { value: 1, unit: 'hours' as const },
+      { value: 3, unit: 'hours' as const },
+      { value: 6, unit: 'hours' as const },
+      { value: 12, unit: 'hours' as const },
+      { value: 1, unit: 'days' as const },
+      { value: 2, unit: 'days' as const },
+    ],
     default: 60,
   };
+  // Convert preset objects to minutes for the dropdown
+  const durationMinutesOptions = durationPresetsConfig.presets.map((p) => convertToMinutes(p.value, p.unit));
   const cadencePresets = adminConfig?.cadencePresets ?? {
     presets: [10, 60, 300],
     default: 60,
@@ -87,7 +96,7 @@ export default function CreateJob() {
       targetType: 'mac',
       targetMac: '',
       targetIp: '',
-      durationMinutes: durationPresets.default,
+      durationMinutes: durationPresetsConfig.default,
       cadenceSeconds: cadencePresets.default,
       reason: 'reactive',
       notificationEmail: user?.email ?? '',
@@ -368,7 +377,7 @@ export default function CreateJob() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent className="bg-popover">
-                          {durationPresets.presets.map((minutes) => (
+                          {durationMinutesOptions.map((minutes) => (
                             <SelectItem key={minutes} value={minutes.toString()}>
                               {formatDurationFromMinutes(minutes)}
                             </SelectItem>
