@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, XCircle, Loader2, Mail, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -38,7 +38,7 @@ import { useJobAlerts } from '@/hooks/use-alerts';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { stopSimulator } from '@/lib/ping-simulator';
+import { stopSimulator, checkAndHandleJob } from '@/lib/ping-simulator';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -75,11 +75,37 @@ export default function JobDetail() {
   const { toast } = useToast();
   const { internalUser: user } = useAuthContext();
   const queryClient = useQueryClient();
+  const hasCheckedJob = useRef(false);
 
   const { data: job, isLoading: jobLoading, error: jobError } = useJob(id);
   const { data: samples = [] } = useJobSamples(id);
   const { data: alerts = [] } = useJobAlerts(id);
   const cancelJobMutation = useCancelJob();
+
+  // Check and handle job state on load (auto-complete if expired, resume if still running)
+  useEffect(() => {
+    if (!id || !job || hasCheckedJob.current) return;
+    if (job.status !== 'running') return;
+
+    hasCheckedJob.current = true;
+    
+    checkAndHandleJob(id).then((result) => {
+      if (result === 'completed') {
+        toast({
+          title: 'Job Auto-Completed',
+          description: 'This job has been automatically completed as it exceeded its scheduled duration.',
+        });
+        queryClient.invalidateQueries({ queryKey: ['job', id] });
+        queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        queryClient.invalidateQueries({ queryKey: ['job-stats'] });
+      } else if (result === 'resumed') {
+        toast({
+          title: 'Simulator Resumed',
+          description: 'Sample collection has been resumed for this job.',
+        });
+      }
+    });
+  }, [id, job, queryClient, toast]);
 
   // Subscribe to real-time updates for samples, job, and alerts
   useEffect(() => {
