@@ -1,11 +1,12 @@
 import { useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, XCircle, Clock, Activity, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowLeft, XCircle, Loader2, Mail, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,63 +19,35 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from 'recharts';
-import { formatDateTime, formatDurationFromMinutes, formatCadence, formatPercent, formatMs } from '@/lib/format';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { formatDateTime, formatDurationFromMinutes, formatCadence } from '@/lib/format';
 import { calculateJobSummary } from '@/lib/calculations';
 import { useJob, useJobSamples, useCancelJob } from '@/hooks/use-jobs';
+import { useJobAlerts } from '@/hooks/use-alerts';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { useUser } from '@/contexts/UserContext';
 import { useToast } from '@/hooks/use-toast';
 import { stopSimulator } from '@/lib/ping-simulator';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
-import type { Sample } from '@/types';
 
-function MetricTile({
-  label,
-  value,
-  subValue,
-  pass,
-  icon: Icon,
-}: {
-  label: string;
-  value: string;
-  subValue?: string;
-  pass?: boolean;
-  icon?: React.ElementType;
-}) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-sm font-medium text-muted-foreground">{label}</p>
-            <p className="text-2xl font-bold mt-1">{value}</p>
-            {subValue && (
-              <p className="text-xs text-muted-foreground mt-1">{subValue}</p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {pass !== undefined && (
-              <Badge variant={pass ? 'default' : 'destructive'}>
-                {pass ? 'PASS' : 'FAIL'}
-              </Badge>
-            )}
-            {Icon && <Icon className="h-5 w-5 text-muted-foreground" />}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+// Extracted components
+import { RTTChart } from '@/components/charts/RTTChart';
+import { AvailabilityTimeline } from '@/components/charts/AvailabilityTimeline';
+import { JobMetricsGrid } from '@/components/job/JobMetricsGrid';
+import { JobEventLog } from '@/components/job/JobEventLog';
+import { CompletionEmailPreview } from '@/components/email/CompletionEmailPreview';
 
 function LoadingSkeleton() {
   return (
@@ -105,6 +78,7 @@ export default function JobDetail() {
 
   const { data: job, isLoading: jobLoading, error: jobError } = useJob(id);
   const { data: samples = [] } = useJobSamples(id);
+  const { data: alerts = [] } = useJobAlerts(id);
   const cancelJobMutation = useCancelJob();
 
   // Subscribe to real-time sample updates
@@ -122,13 +96,11 @@ export default function JobDetail() {
           filter: `job_id=eq.${id}`,
         },
         () => {
-          // Refetch samples when new ones arrive
           queryClient.invalidateQueries({ queryKey: ['samples', id] });
         }
       )
       .subscribe();
 
-    // Also subscribe to job updates
     const jobChannel = supabase
       .channel(`job:${id}`)
       .on(
@@ -152,14 +124,6 @@ export default function JobDetail() {
   }, [id, job?.status, queryClient]);
 
   const summary = samples.length > 0 ? calculateJobSummary(samples) : null;
-
-  // Prepare chart data
-  const chartData = samples.map((sample, index) => ({
-    time: new Date(sample.recorded_at).toLocaleTimeString(),
-    rtt: sample.status === 'success' ? sample.rtt_ms : null,
-    missed: sample.status === 'missed' ? 1 : 0,
-    index,
-  }));
 
   const progress = job?.status === 'running'
     ? Math.min(100, (Date.now() - new Date(job.started_at).getTime()) / (job.duration_minutes * 60 * 1000) * 100)
@@ -198,6 +162,37 @@ export default function JobDetail() {
         variant: 'destructive',
       });
     }
+  }
+
+  function handleCopyEmailContent() {
+    // Copy a text summary to clipboard
+    if (!job || !summary) return;
+    
+    const text = `
+Monitoring Job Completed
+========================
+Account: ${job.account_number}
+Target: ${job.target_mac || job.target_ip}
+Result: ${summary.overallPass ? 'PASS' : 'FAIL'}
+
+Packet Loss: ${summary.packetLossPercent.toFixed(2)}% (${summary.passPacketLoss ? 'PASS' : 'FAIL'})
+p95 Latency: ${summary.p95RttMs?.toFixed(1) ?? '—'} ms (${summary.passLatency ? 'PASS' : 'FAIL'})
+
+Statistics:
+- Total Samples: ${summary.totalSamples}
+- Success Rate: ${summary.successRate.toFixed(1)}%
+- Outage Events: ${summary.outageEventCount}
+- Longest Miss Streak: ${summary.longestMissStreak}
+- System Errors: ${summary.systemErrorCount}
+
+View full details: ${window.location.href}
+    `.trim();
+
+    navigator.clipboard.writeText(text);
+    toast({
+      title: 'Copied',
+      description: 'Email content copied to clipboard.',
+    });
   }
 
   if (jobLoading) {
@@ -256,34 +251,76 @@ export default function JobDetail() {
             </p>
           </div>
         </div>
-        {job.status === 'running' && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" className="gap-2">
-                <XCircle className="h-4 w-4" />
-                Cancel Job
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Cancel Monitoring Job?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will stop monitoring for account {job.account_number}.
-                  This action cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Keep Running</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleCancelJob}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
+        <div className="flex items-center gap-2">
+          {/* Email Preview for completed jobs */}
+          {job.status === 'completed' && summary && (
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2">
+                  <Mail className="h-4 w-4" />
+                  Email Preview
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-3xl max-h-[90vh]">
+                <DialogHeader>
+                  <DialogTitle>Completion Email Preview</DialogTitle>
+                  <DialogDescription>
+                    Preview of the email that would be sent to {job.notification_email}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex justify-end mb-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={handleCopyEmailContent}
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copy to Clipboard
+                  </Button>
+                </div>
+                <ScrollArea className="max-h-[60vh]">
+                  <CompletionEmailPreview
+                    job={job}
+                    summary={summary}
+                    samples={samples}
+                    jobDetailUrl={window.location.href}
+                  />
+                </ScrollArea>
+              </DialogContent>
+            </Dialog>
+          )}
+
+          {/* Cancel button for running jobs */}
+          {job.status === 'running' && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" className="gap-2">
+                  <XCircle className="h-4 w-4" />
                   Cancel Job
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        )}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Cancel Monitoring Job?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will stop monitoring for account {job.account_number}.
+                    This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Keep Running</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleCancelJob}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    Cancel Job
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
       </div>
 
       {/* Progress (for running jobs) */}
@@ -305,54 +342,7 @@ export default function JobDetail() {
 
       {/* Key Metrics */}
       {summary ? (
-        <>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <MetricTile
-              label="Packet Loss"
-              value={formatPercent(summary.packetLossPercent)}
-              subValue="Threshold: ≤2%"
-              pass={summary.passPacketLoss}
-            />
-            <MetricTile
-              label="p95 Latency"
-              value={formatMs(summary.p95RttMs)}
-              subValue="Threshold: ≤100ms"
-              pass={summary.passLatency}
-            />
-            <MetricTile
-              label="Avg RTT"
-              value={formatMs(summary.avgRttMs)}
-              subValue={`Max: ${formatMs(summary.maxRttMs)}`}
-              icon={Clock}
-            />
-            <MetricTile
-              label="Success Rate"
-              value={formatPercent(summary.successRate)}
-              subValue={`${summary.successCount}/${summary.totalSamples} samples`}
-              icon={Activity}
-            />
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-3">
-            <MetricTile
-              label="Outage Events"
-              value={summary.outageEventCount.toString()}
-              subValue="5+ consecutive misses"
-              icon={AlertTriangle}
-            />
-            <MetricTile
-              label="Longest Miss Streak"
-              value={`${summary.longestMissStreak} pings`}
-              icon={XCircle}
-            />
-            <MetricTile
-              label="System Errors"
-              value={summary.systemErrorCount.toString()}
-              subValue={formatPercent((summary.systemErrorCount / summary.totalSamples) * 100)}
-              icon={AlertTriangle}
-            />
-          </div>
-        </>
+        <JobMetricsGrid summary={summary} />
       ) : (
         <Card>
           <CardContent className="py-8">
@@ -365,130 +355,112 @@ export default function JobDetail() {
       )}
 
       {/* RTT Chart */}
-      {chartData.length > 0 && (
+      {samples.length > 0 && <RTTChart samples={samples} />}
+
+      {/* Availability Timeline */}
+      {samples.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Latency Over Time</CardTitle>
+            <CardTitle>Availability Timeline</CardTitle>
             <CardDescription>
-              RTT (ms) for each ping attempt. Gaps indicate missed pings.
+              Color-coded visualization of each sample. Hover for details.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis
-                    dataKey="index"
-                    tickFormatter={(i) => `#${i + 1}`}
-                    className="text-xs"
-                  />
-                  <YAxis
-                    domain={[0, 'auto']}
-                    tickFormatter={(v) => `${v}ms`}
-                    className="text-xs"
-                  />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (active && payload?.length) {
-                        const data = payload[0].payload;
-                        return (
-                          <div className="rounded-lg border bg-background p-2 shadow-sm">
-                            <p className="text-xs text-muted-foreground">{data.time}</p>
-                            <p className="font-medium">
-                              {data.rtt !== null ? `${Number(data.rtt).toFixed(1)} ms` : 'Missed'}
-                            </p>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <ReferenceLine y={100} stroke="hsl(var(--destructive))" strokeDasharray="5 5" />
-                  <Line
-                    type="monotone"
-                    dataKey="rtt"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
-                    dot={false}
-                    connectNulls={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            <AvailabilityTimeline
+              samples={samples}
+              startTime={new Date(job.started_at)}
+              endTime={job.completed_at ? new Date(job.completed_at) : undefined}
+            />
           </CardContent>
         </Card>
       )}
 
-      {/* Job Configuration */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Job Configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Account Number</dt>
-              <dd className="text-sm">{job.account_number}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">MAC Address</dt>
-              <dd className="text-sm font-mono">{job.target_mac || '—'}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Management IP</dt>
-              <dd className="text-sm font-mono">{job.target_ip || '—'}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Duration</dt>
-              <dd className="text-sm">{formatDurationFromMinutes(job.duration_minutes)}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Cadence</dt>
-              <dd className="text-sm">{formatCadence(job.cadence_seconds)}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Reason</dt>
-              <dd className="text-sm capitalize">{job.reason}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Requester</dt>
-              <dd className="text-sm">{job.requester_name}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Notification Email</dt>
-              <dd className="text-sm">{job.notification_email}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Source</dt>
-              <dd className="text-sm">{job.source === 'tempo' ? 'TeMPO API' : 'Web App'}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Started</dt>
-              <dd className="text-sm">{formatDateTime(job.started_at)}</dd>
-            </div>
-            {job.completed_at && (
+      {/* Event Log & Job Configuration side by side */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Event Log */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Event Log</CardTitle>
+            <CardDescription>
+              Job lifecycle and alert history
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <JobEventLog job={job} alerts={alerts} />
+          </CardContent>
+        </Card>
+
+        {/* Job Configuration */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Job Configuration</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid gap-3 sm:grid-cols-2 text-sm">
               <div>
-                <dt className="text-sm font-medium text-muted-foreground">Completed</dt>
-                <dd className="text-sm">{formatDateTime(job.completed_at)}</dd>
+                <dt className="font-medium text-muted-foreground">Account Number</dt>
+                <dd>{job.account_number}</dd>
               </div>
-            )}
-            {job.cancelled_at && (
               <div>
-                <dt className="text-sm font-medium text-muted-foreground">Cancelled</dt>
-                <dd className="text-sm">{formatDateTime(job.cancelled_at)}</dd>
+                <dt className="font-medium text-muted-foreground">MAC Address</dt>
+                <dd className="font-mono">{job.target_mac || '—'}</dd>
               </div>
-            )}
-            <div>
-              <dt className="text-sm font-medium text-muted-foreground">Alerts</dt>
-              <dd className="text-sm">
-                {job.alert_on_offline && 'Offline'}{job.alert_on_offline && job.alert_on_recovery && ', '}{job.alert_on_recovery && 'Recovery'}
-                {!job.alert_on_offline && !job.alert_on_recovery && 'None'}
-              </dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
+              <div>
+                <dt className="font-medium text-muted-foreground">Management IP</dt>
+                <dd className="font-mono">{job.target_ip || '—'}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Duration</dt>
+                <dd>{formatDurationFromMinutes(job.duration_minutes)}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Cadence</dt>
+                <dd>{formatCadence(job.cadence_seconds)}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Reason</dt>
+                <dd className="capitalize">{job.reason}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Requester</dt>
+                <dd>{job.requester_name}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Notification Email</dt>
+                <dd>{job.notification_email}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Source</dt>
+                <dd>{job.source === 'tempo' ? 'TeMPO API' : 'Web App'}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Alerts</dt>
+                <dd>
+                  {job.alert_on_offline && 'Offline'}{job.alert_on_offline && job.alert_on_recovery && ', '}{job.alert_on_recovery && 'Recovery'}
+                  {!job.alert_on_offline && !job.alert_on_recovery && 'None'}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Started</dt>
+                <dd>{formatDateTime(job.started_at)}</dd>
+              </div>
+              {job.completed_at && (
+                <div>
+                  <dt className="font-medium text-muted-foreground">Completed</dt>
+                  <dd>{formatDateTime(job.completed_at)}</dd>
+                </div>
+              )}
+              {job.cancelled_at && (
+                <div>
+                  <dt className="font-medium text-muted-foreground">Cancelled</dt>
+                  <dd>{formatDateTime(job.cancelled_at)}</dd>
+                </div>
+              )}
+            </dl>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
