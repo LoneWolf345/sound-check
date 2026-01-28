@@ -1,185 +1,220 @@
 
-# Modem Monitoring Tool - Implementation Plan
+# Phase 2: Job Management - Implementation Plan
 
 ## Overview
-An internal web application for frontline associates to monitor modem connectivity via ICMP ping jobs. The app provides clear pass/fail outcomes for packet loss and latency, with alerting, email notifications, and TeMPO API integration.
+Phase 2 focuses on wiring the existing UI to the database and implementing the mock ping simulator. This phase will make job creation, listing, viewing, and cancellation fully functional with real data persistence.
 
 ---
 
-## Phase 1: Foundation & Core Infrastructure
+## Part 1: Database Hooks & Queries
 
-### Database Setup (Lovable Cloud)
-- **Jobs table**: Store monitoring jobs with status, configuration, and results
-- **Samples table**: Store individual ping results (success/missed/system_error)
-- **Audit logs table**: Track all user and system actions
-- **Admin config table**: Store presets, thresholds, and limits
-- **Alerts table**: Track alert states and delivery
+### 1.1 Create React Query Hooks
+Create a new hooks file `src/hooks/use-jobs.ts` with the following hooks:
 
-### Mock User Context
-- Simple user identification (mock SSO bypass)
-- Admin vs regular user flag for configuration access
+- **useJobs**: Fetch all jobs with filtering and search
+- **useJob**: Fetch a single job by ID
+- **useJobSamples**: Fetch samples for a specific job
+- **useCreateJob**: Mutation to create a new job
+- **useCancelJob**: Mutation to cancel a running job
+- **useJobStats**: Fetch dashboard statistics
 
----
+### 1.2 Create Admin Config Hook
+Create `src/hooks/use-admin-config.ts`:
 
-## Phase 2: Job Management
+- **useAdminConfig**: Fetch all admin configuration values
+- **useUpdateAdminConfig**: Mutation to update config (admin only)
 
-### Job Creation Flow
-- Account number input with validation (mock Billing API response)
-- Target identifier: MAC address or CM management IP
-- Duration selector (1, 3, 6, 12 hours / 1, 2 days)
-- Cadence selector (10 sec, 1 min, 5 min)
-- Reason dropdown (Reactive/Proactive)
-- Email notification field (pre-filled with requester)
-- Alert opt-in checkboxes (offline alert, recovery alert)
-- Inline validation with clear error messages
+### 1.3 Create Audit Log Hook
+Create `src/hooks/use-audit-log.ts`:
 
-### Job Execution (Mocked)
-- Jobs start immediately on submission
-- Mock ping simulator generates realistic data patterns
-- Support for configurable scenarios (healthy modem, intermittent issues, offline)
-- Automatic job completion at end of duration
-
-### Job Actions
-- View running job status in real-time
-- Cancel jobs early with confirmation
-- View completed job results
+- **useAuditLogs**: Fetch audit log entries with pagination
+- **useCreateAuditLog**: Utility to create audit entries
 
 ---
 
-## Phase 3: Results & Visualization
+## Part 2: Wire Up Job Creation
 
-### Pass/Fail Evaluation
-- **Packet Loss**: Calculate missed_pings / total_attempts, compare to threshold (default 2%)
-- **Latency**: Calculate p95 RTT, compare to threshold (default 100ms)
-- Overall status: PASS only if all metrics pass
+### 2.1 Update CreateJob.tsx
+- Connect form submission to `useCreateJob` mutation
+- Insert job record into `jobs` table
+- Create audit log entry for `job.create` action
+- Check usage limits before allowing creation:
+  - Count user's jobs today (max 50)
+  - Count global running jobs (max 100)
+- Show clear error messages if limits exceeded
 
-### Job Detail View
-- Summary tiles showing key metrics:
-  - Packet loss % with pass/fail badge
-  - p95 latency with pass/fail badge
-  - Avg RTT, Max RTT
-  - Success rate %
-  - Outage event count
-  - Longest consecutive miss streak
-  - System error count
-- Charts (using Recharts):
-  - RTT time-series line chart with missed pings marked
-  - Availability timeline strip (color-coded)
-- Event log showing job lifecycle and alerts
-
-### Job List View
-- Table of jobs with filtering:
-  - Status filter (Running/Completed/Cancelled/Failed)
-  - Search by account number, MAC, IP, job ID
-- Sortable columns
-- Quick actions (view details, cancel if running)
+### 2.2 Load Admin Presets Dynamically
+- Fetch duration/cadence presets from `admin_config` table
+- Replace hardcoded `DURATION_PRESETS` and `CADENCE_PRESETS`
+- Fall back to defaults if config not loaded
 
 ---
 
-## Phase 4: Alerting System
+## Part 3: Wire Up Job List
 
-### Alert State Machine
-- Track state per job: OK → OFFLINE_ALERTED → OK
-- Trigger offline alert after 5 consecutive missed pings
-- Trigger recovery alert after 5 consecutive successes (post-offline)
-- No repeated alerts while in same state
-
-### Alert Delivery
-- Mock email sending (log to console, show in UI)
-- In-app event log entries for each alert
+### 3.1 Update JobList.tsx
+- Replace `MOCK_JOBS` with `useJobs` hook
+- Implement real filtering by status
+- Implement real search across account number, MAC, IP, job ID
+- Add loading states and error handling
+- Wire up cancel button to `useCancelJob` mutation
 
 ---
 
-## Phase 5: Completion & Notifications
+## Part 4: Wire Up Job Detail
 
-### Completion Email (Mock)
-- Generate email content with:
-  - Job details (account, target, duration, cadence, reason)
-  - Overall PASS/FAIL status
-  - Pass/fail table for each metric
-  - Embedded chart images (or chart descriptions for mock)
-  - Link back to job detail page
-- System error note if errors exceed 5%
-- Display in UI as "email preview"
+### 4.1 Update JobDetail.tsx
+- Fetch job data using `useJob(id)` hook
+- Fetch samples using `useJobSamples(id)` hook
+- Calculate summary metrics from real sample data
+- Show loading skeleton while fetching
+- Handle "job not found" case gracefully
+- Wire up cancel button to `useCancelJob` mutation
 
 ---
 
-## Phase 6: Admin Configuration
+## Part 5: Mock Ping Simulator
 
-### Admin Dashboard
-- Protected admin-only route
-- Duration presets management (add/remove/reorder)
-- Cadence presets management
-- Threshold configuration:
-  - Packet loss % threshold
-  - p95 latency threshold
-  - System error % threshold for email note
-- Usage limits:
-  - Jobs per user per day (default: 50)
-  - Total running jobs globally (default: 100)
-- Default selections for new jobs
+### 5.1 Create Ping Simulator Service
+Create `src/lib/ping-simulator.ts`:
 
-### Usage Limit Enforcement
-- Block job creation when limits exceeded
-- Clear error messages with guidance
+- Function to generate and insert mock samples for a job
+- Uses the existing `generateMockSamples` logic
+- Configurable scenario (healthy, intermittent, offline)
+- Runs on a timer to simulate real-time sample collection
 
----
+### 5.2 Simulate Job Execution
+When a job is created:
+1. Job starts immediately (status = 'running')
+2. Simulator begins generating samples at the configured cadence
+3. Samples are inserted into the `samples` table
+4. When duration expires, job status updates to 'completed'
 
-## Phase 7: TeMPO API Integration
-
-### API Endpoints (Edge Functions)
-- `POST /jobs` - Create a new monitoring job
-- `GET /jobs/:id` - Fetch job metadata and summary
-- `GET /jobs/:id/samples` - Fetch sample data for charts
-- `DELETE /jobs/:id` - Cancel a running job
-
-### Webhook System
-- Global webhook endpoint configuration (admin setting)
-- Event types:
-  - `job.started`
-  - `job.sample_batch` (batched updates)
-  - `job.alert_triggered`
-  - `job.completed`
-  - `job.cancelled`
-- HMAC signature for security
-- Webhook delivery logging
+### 5.3 Real-time Updates
+- Enable Supabase Realtime on `jobs` and `samples` tables
+- Job Detail page subscribes to sample updates
+- Dashboard/Job List subscribes to job status changes
 
 ---
 
-## Phase 8: Audit & Observability
+## Part 6: Wire Up Dashboard
 
-### Audit Logging
-- Automatic logging of all actions:
-  - job.create, job.cancel, job.complete
-  - alert.triggered
-  - admin.config.change (with before/after values)
-- Audit log viewer for admins
-- Fields: actor, timestamp, action, entity, details
-
-### Dashboard Metrics (Admin View)
-- Jobs created today
-- Currently running jobs
-- Poller/system error rate
-- Email/webhook delivery stats
+### 6.1 Update Dashboard.tsx
+- Fetch real stats using `useJobStats` hook:
+  - Count of running jobs
+  - Count of jobs completed today
+  - Average packet loss across today's jobs
+  - Count of alerts triggered today
+- Fetch recent jobs (last 5) for current user
+- Display real data in stat cards and recent jobs list
 
 ---
 
-## Key Screens
+## Part 7: Cancel Job Flow
 
-1. **Dashboard/Home**: Quick job creation + recent jobs
-2. **Create Job**: Form with all required inputs and validation
-3. **Job List**: Searchable, filterable table of jobs
-4. **Job Detail**: Full results with charts, metrics, and event log
-5. **Admin Settings**: Presets, thresholds, limits configuration
-6. **Audit Log**: Searchable log of all system actions
+### 7.1 Implement Job Cancellation
+- Update job status to 'cancelled'
+- Set `cancelled_at` timestamp
+- Stop the ping simulator (if running in browser)
+- Create audit log entry for `job.cancel`
+- Show confirmation dialog before cancelling
 
 ---
 
-## Mock Data Strategy
+## Part 8: Admin Settings Persistence
 
-- Billing API: Returns valid account with mock modem data
-- SpreeDB Pollers: Simulated ping results with configurable patterns
-- Email: Logged and displayed in UI, not actually sent
-- SSO: User identity stored in local state
+### 8.1 Wire Up AdminSettings.tsx
+- Load current config values from `admin_config` table
+- Save changes using `useUpdateAdminConfig` mutation
+- Create audit log entries with before/after values
+- Show success/error toast on save
 
-This approach lets you build and test the complete application flow, then swap in real integrations when ready.
+---
+
+## Technical Details
+
+### Database Queries Summary
+
+**Jobs:**
+```sql
+-- Fetch all jobs (with optional filters)
+SELECT * FROM jobs 
+WHERE status = ? AND (account_number ILIKE ? OR target_mac ILIKE ? OR target_ip ILIKE ?)
+ORDER BY created_at DESC
+LIMIT 100
+
+-- Create job
+INSERT INTO jobs (account_number, target_mac, target_ip, ...) VALUES (...)
+
+-- Cancel job
+UPDATE jobs SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?
+```
+
+**Samples:**
+```sql
+-- Fetch samples for job
+SELECT * FROM samples WHERE job_id = ? ORDER BY sequence_number ASC
+```
+
+**Stats:**
+```sql
+-- Running jobs count
+SELECT COUNT(*) FROM jobs WHERE status = 'running'
+
+-- Completed today
+SELECT COUNT(*) FROM jobs 
+WHERE status = 'completed' AND completed_at >= CURRENT_DATE
+
+-- User jobs today
+SELECT COUNT(*) FROM jobs 
+WHERE requester_id = ? AND created_at >= CURRENT_DATE
+```
+
+### Real-time Subscriptions
+
+```typescript
+// Enable realtime for tables (migration)
+ALTER PUBLICATION supabase_realtime ADD TABLE jobs;
+ALTER PUBLICATION supabase_realtime ADD TABLE samples;
+
+// Subscribe to job updates
+supabase.channel('jobs').on('postgres_changes', { 
+  event: '*', schema: 'public', table: 'jobs' 
+}, callback)
+
+// Subscribe to new samples for a specific job
+supabase.channel(`samples:${jobId}`).on('postgres_changes', {
+  event: 'INSERT', schema: 'public', table: 'samples',
+  filter: `job_id=eq.${jobId}`
+}, callback)
+```
+
+### Files to Create
+- `src/hooks/use-jobs.ts` - Job-related React Query hooks
+- `src/hooks/use-admin-config.ts` - Admin config hooks
+- `src/hooks/use-audit-log.ts` - Audit logging hooks
+- `src/lib/ping-simulator.ts` - Mock ping simulation service
+
+### Files to Update
+- `src/pages/CreateJob.tsx` - Wire to database
+- `src/pages/JobList.tsx` - Wire to database
+- `src/pages/JobDetail.tsx` - Wire to database
+- `src/pages/Dashboard.tsx` - Wire to database
+- `src/pages/AdminSettings.tsx` - Wire to database
+
+### Migration Required
+Add realtime publication for jobs and samples tables:
+```sql
+ALTER PUBLICATION supabase_realtime ADD TABLE jobs;
+ALTER PUBLICATION supabase_realtime ADD TABLE samples;
+```
+
+---
+
+## Summary
+This phase transforms the application from static mock data to a fully functional data-driven app with:
+- Real job persistence in the database
+- Mock ping data generation simulating real poller behavior
+- Real-time updates as samples are collected
+- Usage limit enforcement
+- Audit logging for all actions
