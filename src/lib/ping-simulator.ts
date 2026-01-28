@@ -2,7 +2,6 @@ import { supabase } from '@/integrations/supabase/client';
 import type { SampleStatus } from '@/types';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 export type SimulatorScenario = 'healthy' | 'intermittent' | 'offline';
 
@@ -148,15 +147,23 @@ async function completeJob(jobId: string) {
   
   console.log(`Job ${jobId} completed`);
 
-  // Trigger completion email
+  // Trigger completion email with authenticated user's token
   try {
     const jobDetailUrl = `${window.location.origin}/jobs/${jobId}`;
+    
+    // Get current user session for authenticated API call
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session?.access_token) {
+      console.warn('No authenticated session - completion email will not be sent');
+      return;
+    }
     
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-completion-email`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({ jobId, jobDetailUrl }),
     });

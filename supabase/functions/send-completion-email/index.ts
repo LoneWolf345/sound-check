@@ -351,10 +351,37 @@ const handler = async (req: Request): Promise<Response> => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
-    if (!supabaseUrl || !supabaseServiceKey) {
+    if (!supabaseUrl || !supabaseServiceKey || !supabaseAnonKey) {
       throw new Error("Supabase configuration missing");
     }
+
+    // Validate authentication - require valid JWT
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized - missing auth header" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    // Verify the JWT and get user claims
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    
+    const token = authHeader.replace("Bearer ", "");
+    const { data: authData, error: authError } = await authClient.auth.getUser(token);
+    
+    if (authError || !authData.user) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized - invalid token" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    const userId = authData.user.id;
 
     const { jobId, jobDetailUrl } = await req.json();
 
@@ -374,6 +401,34 @@ const handler = async (req: Request): Promise<Response> => {
 
     if (jobError || !job) {
       throw new Error(`Job not found: ${jobError?.message || "Unknown error"}`);
+    }
+
+    // Authorization: Verify the calling user owns this job or is an admin
+    const { data: hasAdminRole } = await supabase.rpc("has_role", {
+      _user_id: userId,
+      _role: "admin",
+    });
+
+    if (job.requester_id !== userId && !hasAdminRole) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Forbidden - you do not own this job" }),
+        { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    // Rate limiting: Check if completion email was already sent for this job
+    const { data: existingAlerts } = await supabase
+      .from("alerts")
+      .select("id")
+      .eq("job_id", jobId)
+      .eq("alert_type", "completion_email")
+      .limit(1);
+
+    if (existingAlerts && existingAlerts.length > 0) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Completion email already sent for this job" }),
+        { status: 429, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
     }
 
     // Fetch all samples for the job
@@ -407,6 +462,14 @@ const handler = async (req: Request): Promise<Response> => {
     });
 
     console.log("Completion email sent successfully:", emailResponse);
+
+    // Record completion email in alerts table to prevent duplicate sends
+    await supabase.from("alerts").insert({
+      job_id: jobId,
+      alert_type: "completion_email",
+      delivery_status: "delivered",
+      delivered_at: new Date().toISOString(),
+    });
 
     return new Response(
       JSON.stringify({
