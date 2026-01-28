@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import type { MockUser } from '@/types';
 
-// Default mock users for development
+// Default mock users for development - using valid UUIDs to match database schema
 const MOCK_USERS: MockUser[] = [
-  { id: 'user-1', name: 'John Smith', email: 'john.smith@company.com', isAdmin: false },
-  { id: 'user-2', name: 'Jane Doe', email: 'jane.doe@company.com', isAdmin: false },
-  { id: 'admin-1', name: 'Admin User', email: 'admin@company.com', isAdmin: true },
+  { id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890', name: 'John Smith', email: 'john.smith@company.com', isAdmin: false },
+  { id: 'b2c3d4e5-f6a7-8901-bcde-f12345678901', name: 'Jane Doe', email: 'jane.doe@company.com', isAdmin: false },
+  { id: 'c3d4e5f6-a7b8-9012-cdef-123456789012', name: 'Admin User', email: 'admin@company.com', isAdmin: true },
 ];
 
 interface UserContextValue {
