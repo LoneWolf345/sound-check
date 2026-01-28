@@ -1,194 +1,223 @@
 
-# Phase 4: Email Sending - ✅ COMPLETE
+# Dynamic Duration Presets with Unit Selection
 
-## Status: Implemented
-
-Phase 4 has been fully implemented with the following components:
-
----
-
-## Part 1: Set Up Email Service Integration
-
-### 1.1 Configure Resend API
-The email sending will use Resend, which requires:
-
-- User to create a Resend account at https://resend.com
-- User to verify their email domain at https://resend.com/domains
-- User to create an API key at https://resend.com/api-keys
-- Add `RESEND_API_KEY` secret to the project
-
-### 1.2 Create Email Sending Edge Function
-Create `supabase/functions/send-completion-email/index.ts`:
-
-- Accept job ID as input
-- Fetch job and samples from database using service role key
-- Calculate summary metrics
-- Generate HTML email content matching the CompletionEmailPreview design
-- Send via Resend API
-- Return success/failure status
+## Overview
+Transform the fixed duration presets array into a dynamic list where admins can add, edit, and remove entries. Each entry will have a numeric value and a selectable unit (minutes, hours, or days).
 
 ---
 
-## Part 2: Email HTML Template
+## Current State
 
-### 2.1 Create Email HTML Generator
-The edge function will include an HTML template generator that produces:
-
-- **Header**: Job completed notification with account number and target
-- **Result Badge**: Prominent PASS/FAIL indicator with color styling
-- **Metric Table**: Packet loss and p95 latency with thresholds and pass/fail
-- **Statistics Summary**: Total samples, success rate, outage events, miss streaks
-- **System Error Warning**: Conditional section if errors exceed 5%
-- **Footer**: Link to job detail page and generation timestamp
-
-### 2.2 Email Styling
-- Inline CSS for email client compatibility
-- Responsive design for mobile email clients
-- Color-coded pass (green) / fail (red) badges
-- Clean, professional layout matching the preview component
-
----
-
-## Part 3: Trigger Email on Job Completion
-
-### 3.1 Update Ping Simulator
-Modify `src/lib/ping-simulator.ts`:
-
-- After updating job status to 'completed', call the edge function
-- Pass the job ID and job detail URL
-- Handle success/failure response
-- Log any email delivery errors
-
-### 3.2 Alternative: Database Trigger (Future)
-For production, a Postgres trigger or cron job would be more reliable than client-side triggering. This phase uses client-side for simplicity; Phase 5 could implement server-side triggers.
-
----
-
-## Part 4: Track Email Delivery
-
-### 4.1 Create Email Log Table (Optional Enhancement)
-Could add an `email_logs` table to track:
-- Job ID
-- Recipient email
-- Sent timestamp
-- Delivery status
-- Error message (if any)
-
-For Phase 4, we'll use the existing `alerts` table delivery_status pattern or simply log to console.
-
----
-
-## Technical Details
-
-### Edge Function: send-completion-email
-
-```text
-supabase/functions/send-completion-email/index.ts
-
-Request Body:
-{
-  "jobId": "uuid",
-  "jobDetailUrl": "https://..."
-}
-
-Response:
-{
-  "success": true,
-  "messageId": "resend-message-id"
-}
-```
-
-### Email Content Structure
-
-```text
-+------------------------------------------+
-|  MONITORING JOB COMPLETED                |
-|  Account: 12345678 | 00:11:22:33:44:55   |
-+------------------------------------------+
-|                                          |
-|           [PASS] or [FAIL]               |
-|                                          |
-+------------------------------------------+
-|  JOB CONFIGURATION                       |
-|  Duration: 1 hour | Cadence: 10 sec      |
-|  Reason: Reactive | Started: Jan 28...   |
-+------------------------------------------+
-|  METRIC RESULTS                          |
-|  Metric      | Value  | Threshold | Pass |
-|  Packet Loss | 1.2%   | <= 2%     | PASS |
-|  p95 Latency | 45ms   | <= 100ms  | PASS |
-+------------------------------------------+
-|  COLLECTION STATISTICS                   |
-|  Total Samples: 360                      |
-|  Successful: 354 (98.3%)                 |
-|  Missed: 5                               |
-|  Outage Events: 0                        |
-|  Longest Miss Streak: 2                  |
-|  System Errors: 1 (0.3%)                 |
-+------------------------------------------+
-|  [View Full Job Details]                 |
-|  Generated: Jan 28, 2026 2:30 PM         |
-+------------------------------------------+
-```
-
-### Files to Create
-
-- `supabase/functions/send-completion-email/index.ts` - Main edge function
-- `supabase/functions/send-completion-email/email-template.ts` - HTML generator (or inline)
-
-### Files to Update
-
-- `supabase/config.toml` - Add function configuration with `verify_jwt = false`
-- `src/lib/ping-simulator.ts` - Add email trigger after job completion
-- `.lovable/plan.md` - Update with Phase 4 completion status
-
-### Calculation Logic in Edge Function
-
-The edge function will replicate the `calculateJobSummary` logic:
-
+The duration presets are currently stored as:
 ```typescript
-function calculateJobSummary(samples) {
-  // Count by status
-  // Calculate packet loss (missed / (success + missed))
-  // Calculate RTT stats (avg, max, p95)
-  // Count outage events (5+ consecutive misses)
-  // Evaluate pass/fail against thresholds
+interface DurationPresetsConfig {
+  presets: number[];  // e.g., [60, 180, 360, 720, 1440, 2880] (all in minutes)
+  default: number;    // e.g., 60
 }
 ```
 
-### Security Considerations
+The Admin Settings page displays these as a fixed grid of 6 input fields, all in minutes.
 
-- Edge function uses `verify_jwt = false` since it's called from client after job completion
-- Uses `SUPABASE_SERVICE_ROLE_KEY` to read job/sample data
-- Validates job exists before sending email
-- Sanitizes email addresses before sending
+---
 
-### Required Secrets
+## Proposed Data Structure
 
-- `RESEND_API_KEY` - Must be added by user via the secrets tool
+### New Type Definition
+```typescript
+type DurationUnit = 'minutes' | 'hours' | 'days';
+
+interface DurationPreset {
+  value: number;      // The numeric value (e.g., 1, 3, 6)
+  unit: DurationUnit; // The unit (e.g., 'hours')
+}
+
+interface DurationPresetsConfig {
+  presets: DurationPreset[];  // Array of preset objects
+  default: number;            // Default value in minutes (for backward compatibility)
+}
+```
+
+### Example Data
+```json
+{
+  "presets": [
+    { "value": 1, "unit": "hours" },
+    { "value": 3, "unit": "hours" },
+    { "value": 6, "unit": "hours" },
+    { "value": 12, "unit": "hours" },
+    { "value": 1, "unit": "days" },
+    { "value": 2, "unit": "days" }
+  ],
+  "default": 60
+}
+```
+
+---
+
+## UI Design
+
+### Admin Settings - Duration Presets Card
+
+```text
++--------------------------------------------------+
+|  [Clock Icon] Duration Presets                   |
+|  Configure available monitoring duration options |
++--------------------------------------------------+
+|                                                  |
+|  +--------+  +----------+  +--------+            |
+|  |   1    |  | hours  v |  |   X    |            |
+|  +--------+  +----------+  +--------+            |
+|                                                  |
+|  +--------+  +----------+  +--------+            |
+|  |   3    |  | hours  v |  |   X    |            |
+|  +--------+  +----------+  +--------+            |
+|                                                  |
+|  +--------+  +----------+  +--------+            |
+|  |   6    |  | hours  v |  |   X    |            |
+|  +--------+  +----------+  +--------+            |
+|                                                  |
+|  +--------+  +----------+  +--------+            |
+|  |   12   |  | hours  v |  |   X    |            |
+|  +--------+  +----------+  +--------+            |
+|                                                  |
+|  +--------+  +----------+  +--------+            |
+|  |   1    |  | days   v |  |   X    |            |
+|  +--------+  +----------+  +--------+            |
+|                                                  |
+|  +--------+  +----------+  +--------+            |
+|  |   2    |  | days   v |  |   X    |            |
+|  +--------+  +----------+  +--------+            |
+|                                                  |
+|  [+ Add Duration Preset]                         |
+|                                                  |
+|  Default: [  1  v] [hours v]                     |
+|                                                  |
++--------------------------------------------------+
+```
+
+### Features
+- Each row has: numeric input, unit dropdown, delete button
+- "Add Duration Preset" button at the bottom
+- Minimum of 1 preset required (delete disabled when only 1 remains)
+- Default selector with its own value/unit combination
 
 ---
 
 ## Implementation Steps
 
-1. **Request RESEND_API_KEY** from user
-2. **Create edge function** `send-completion-email/index.ts`
-3. **Build HTML email template** with inline styles
-4. **Update supabase/config.toml** with function config
-5. **Modify ping-simulator.ts** to trigger email on completion
-6. **Test end-to-end** with a sample job
-7. **Update plan.md** with completion status
+### Step 1: Update Type Definitions
+**File:** `src/types/index.ts`
+
+- Add `DurationUnit` type
+- Add `DurationPreset` interface
+- Update `DurationPresetsConfig` to use the new structure
+
+### Step 2: Add Conversion Utilities
+**File:** `src/lib/format.ts`
+
+- Add `convertToMinutes(value: number, unit: DurationUnit): number`
+- Add `findBestUnit(minutes: number): { value: number, unit: DurationUnit }`
+- Update `formatDurationFromMinutes` if needed for display consistency
+
+### Step 3: Update Admin Config Hook
+**File:** `src/hooks/use-admin-config.ts`
+
+- Update `DEFAULT_DURATION_PRESETS` to use new structure
+- Add migration logic to convert old format to new format when loading
+
+### Step 4: Create Duration Preset Editor Component
+**File:** `src/components/admin/DurationPresetEditor.tsx` (new)
+
+- Reusable component for editing a single preset
+- Props: `value`, `unit`, `onChange`, `onDelete`, `canDelete`
+- Includes number input and unit Select dropdown
+
+### Step 5: Update Admin Settings Page
+**File:** `src/pages/AdminSettings.tsx`
+
+- Replace fixed grid with dynamic list
+- Add/Edit/Remove functionality for presets
+- Update local state management
+- Add validation (no duplicates, at least 1 preset)
+
+### Step 6: Update Create Job Page
+**File:** `src/pages/CreateJob.tsx`
+
+- Convert preset objects to minutes when populating the duration dropdown
+- Ensure display uses `formatDurationFromMinutes` which already handles all units
+
+---
+
+## Technical Details
+
+### Conversion Functions
+
+```typescript
+// Convert preset to minutes for storage/comparison
+function convertToMinutes(value: number, unit: DurationUnit): number {
+  switch (unit) {
+    case 'minutes': return value;
+    case 'hours': return value * 60;
+    case 'days': return value * 1440;
+  }
+}
+
+// Find best unit for display (used for migration)
+function findBestUnit(minutes: number): { value: number, unit: DurationUnit } {
+  if (minutes >= 1440 && minutes % 1440 === 0) {
+    return { value: minutes / 1440, unit: 'days' };
+  }
+  if (minutes >= 60 && minutes % 60 === 0) {
+    return { value: minutes / 60, unit: 'hours' };
+  }
+  return { value: minutes, unit: 'minutes' };
+}
+```
+
+### Backward Compatibility
+
+When loading config from database, check if presets are in old format (array of numbers) and convert:
+
+```typescript
+function migratePresets(config: any): DurationPresetsConfig {
+  if (Array.isArray(config.presets) && typeof config.presets[0] === 'number') {
+    // Old format: convert to new
+    return {
+      presets: config.presets.map(m => findBestUnit(m)),
+      default: config.default,
+    };
+  }
+  return config;
+}
+```
+
+### Validation Rules
+
+1. At least 1 preset must exist
+2. No duplicate duration values (same total minutes)
+3. Value must be positive integer
+4. Default must match one of the presets (or auto-select first)
+
+---
+
+## Files to Create
+
+| File | Purpose |
+|------|---------|
+| `src/components/admin/DurationPresetEditor.tsx` | Reusable preset row component |
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/types/index.ts` | Add `DurationUnit`, `DurationPreset`, update `DurationPresetsConfig` |
+| `src/lib/format.ts` | Add `convertToMinutes`, `findBestUnit` utilities |
+| `src/hooks/use-admin-config.ts` | Update defaults, add migration logic |
+| `src/pages/AdminSettings.tsx` | Replace fixed grid with dynamic list editor |
+| `src/pages/CreateJob.tsx` | Update to handle new preset format |
 
 ---
 
 ## Summary
 
-Phase 4 adds real email delivery for job completion notifications:
-
-- Backend function using Resend for reliable email delivery
-- HTML email matching the existing preview design
-- Automatic trigger when jobs complete
-- Full metrics and pass/fail status in email body
-- Direct link to job detail page for full results
-
-This completes the core monitoring workflow where users can create jobs, monitor progress, and receive results via email.
+This enhancement transforms the duration presets from a fixed array of minutes into a flexible, admin-manageable list where each entry specifies both a value and unit. The changes maintain backward compatibility with existing database records through automatic migration, and the Create Job form will continue to work seamlessly by converting presets to minutes for the duration selector.
