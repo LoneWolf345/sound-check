@@ -1,6 +1,9 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { SampleStatus } from '@/types';
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
 export type SimulatorScenario = 'healthy' | 'intermittent' | 'offline';
 
 // Store active simulators by job ID
@@ -128,7 +131,7 @@ async function insertSample(jobId: string, sequenceNumber: number, scenario: Sim
   }
 }
 
-// Complete a job
+// Complete a job and send completion email
 async function completeJob(jobId: string) {
   const { error } = await supabase
     .from('jobs')
@@ -140,8 +143,33 @@ async function completeJob(jobId: string) {
 
   if (error) {
     console.error('Failed to complete job:', error);
-  } else {
-    console.log(`Job ${jobId} completed`);
+    return;
+  }
+  
+  console.log(`Job ${jobId} completed`);
+
+  // Trigger completion email
+  try {
+    const jobDetailUrl = `${window.location.origin}/jobs/${jobId}`;
+    
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/send-completion-email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ jobId, jobDetailUrl }),
+    });
+
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log(`Completion email sent to ${result.recipient}`);
+    } else {
+      console.error('Failed to send completion email:', result.error);
+    }
+  } catch (emailError) {
+    console.error('Error triggering completion email:', emailError);
   }
 }
 
