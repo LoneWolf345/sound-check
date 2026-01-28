@@ -74,12 +74,19 @@ function pickRandomScenario(): SimulatorScenario {
 }
 
 // Start simulator for a job
+// If monitoringMode is 'real_polling', skip the simulator entirely
 export function startSimulator(
   jobId: string,
   cadenceSeconds: number,
   durationMinutes: number,
-  scenario?: SimulatorScenario
+  scenario?: SimulatorScenario,
+  monitoringMode: 'simulated' | 'real_polling' = 'simulated'
 ) {
+  // Skip simulator for real polling jobs - the OpenShift poller service handles these
+  if (monitoringMode === 'real_polling') {
+    console.log(`Skipping simulator for job ${jobId} - using real polling mode`);
+    return;
+  }
   // Don't start if already running
   if (activeSimulators.has(jobId)) {
     console.log(`Simulator already running for job ${jobId}`);

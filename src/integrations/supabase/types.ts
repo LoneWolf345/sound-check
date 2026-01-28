@@ -118,6 +118,8 @@ export type Database = {
           created_at: string
           duration_minutes: number
           id: string
+          last_ping_at: string | null
+          monitoring_mode: string
           notification_email: string
           reason: Database["public"]["Enums"]["job_reason"]
           requester_id: string
@@ -139,6 +141,8 @@ export type Database = {
           created_at?: string
           duration_minutes: number
           id?: string
+          last_ping_at?: string | null
+          monitoring_mode?: string
           notification_email: string
           reason: Database["public"]["Enums"]["job_reason"]
           requester_id: string
@@ -160,6 +164,8 @@ export type Database = {
           created_at?: string
           duration_minutes?: number
           id?: string
+          last_ping_at?: string | null
+          monitoring_mode?: string
           notification_email?: string
           reason?: Database["public"]["Enums"]["job_reason"]
           requester_id?: string

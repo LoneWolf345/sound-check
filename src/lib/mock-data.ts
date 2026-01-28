@@ -123,9 +123,11 @@ export function generateMockJob(
     requester_id: userId,
     requester_name: userName,
     source: 'web_app',
+    monitoring_mode: 'simulated',
     started_at: now.toISOString(),
     completed_at: null,
     cancelled_at: null,
+    last_ping_at: null,
     created_at: now.toISOString(),
     ...overrides,
   };
