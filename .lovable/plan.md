@@ -1,62 +1,223 @@
 
-# Fix RTTChart Display Issues
 
-## Problem Analysis
-The chart has several rendering issues:
-1. **Y-axis scale is incorrect** - Shows 0-4ms when actual data ranges from 29-131ms
-2. **RTT line is not visible** - Being drawn off the visible Y-axis scale
-3. **Sparse X-axis labels** - Only showing #3 and #5 instead of all sample indices
+# Implement Real Polling via OpenShift Pod
 
-### Root Cause
-The `Scatter` components use separate `data` arrays with `y: 0` values. When Recharts calculates the Y-axis domain, it's including these zero values and ignoring the actual RTT data from the Line component, resulting in a 0-4ms scale instead of the proper 0-150ms scale.
+## Overview
+Since the Supabase edge function cannot reach the internal SpreeDB polling API, the actual polling will be performed by a backend service running in an OpenShift pod. The pod will have network access to the internal polling infrastructure.
 
-## Solution
+---
 
-### 1. Fix Y-axis Domain Calculation
-Explicitly calculate Y-axis domain from RTT values instead of relying on auto-scaling:
+## Architecture
 
-```typescript
-const maxRtt = Math.max(...rttValues.filter(v => v !== null), 0);
-const yDomain = [0, Math.max(maxRtt * 1.1, 10)]; // 10% padding, min 10ms
+```text
++------------------+     +-------------------+     +------------------+
+|   React Web App  |     |  OpenShift Pod    |     |  SpreeDB Poller  |
+|   (Browser)      |     |  (poll-service)   |     |  (Internal API)  |
++------------------+     +-------------------+     +------------------+
+        |                        |                        |
+        |  1. Create Job         |                        |
+        +----------------------->|                        |
+        |   (via Supabase)       |                        |
+        |                        |                        |
+        |                  2. Query running jobs          |
+        |                  3. For each job:               |
+        |                        +----------------------->|
+        |                        |  GET /latency/...      |
+        |                        |<-----------------------+
+        |                        |  { elapsed, error }    |
+        |                        |                        |
+        |                  4. Insert sample to Supabase   |
+        |                        |                        |
+        |  5. View results       |                        |
+        |<-----------------------+                        |
 ```
 
-### 2. Fix Scatter Component Rendering
-Instead of using separate `data` arrays for Scatter (which breaks Y-axis), render markers differently:
-- Use `dot` prop on Line component with custom render for successful points
-- Render missed/error markers using `customized` component or ReferenceDot
+---
 
-### 3. Improve X-axis Tick Display
-Configure XAxis to show more tick marks for better visibility:
+## Implementation Plan
 
-```typescript
-<XAxis 
-  dataKey="index"
-  tickFormatter={(i) => `#${i + 1}`}
-  interval={0} // Show all ticks for small datasets
-  tick={{ fontSize: 10 }}
-/>
+### 1. Create Poller Service (TypeScript/Node.js for OpenShift)
+
+Create a standalone Node.js/TypeScript service that:
+- Runs as a scheduled worker in the OpenShift pod
+- Queries Supabase for active jobs needing pings
+- Calls the SpreeDB API for each job
+- Inserts samples back to Supabase
+- Handles job completion logic
+
+**Location:** `poller-service/` directory at project root
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `poller-service/src/index.ts` | Main entry point / scheduler |
+| `poller-service/src/poller.ts` | Core polling logic |
+| `poller-service/src/supabase.ts` | Supabase client configuration |
+| `poller-service/Dockerfile` | Docker image for OpenShift |
+| `poller-service/package.json` | Dependencies |
+
+### 2. Database Schema Update
+
+Add column to track monitoring mode:
+```sql
+ALTER TABLE jobs ADD COLUMN monitoring_mode TEXT DEFAULT 'simulated';
+-- Values: 'simulated', 'real_polling'
 ```
 
-### 4. Add Dots for Successful Pings
-Enable dots on the line to make data points more visible, especially when there are gaps from missed pings.
+### 3. Update CreateJob UI
+
+Add a toggle to select monitoring mode:
+- **Simulated** (default) - Uses browser-based mock data (current behavior)
+- **Real Polling** - Uses the OpenShift poller service
+
+### 4. Modify Ping Simulator Logic
+
+Update `src/lib/ping-simulator.ts` to skip starting the browser-based simulator for jobs with `monitoring_mode = 'real_polling'`.
+
+---
+
+## Poller Service Details
+
+### Core Logic (`poller-service/src/poller.ts`)
+
+```typescript
+const POLLER_BASE_URL = 'http://phoenix.polling.corp.cableone.net:4402';
+
+interface PollerResponse {
+  elapsed: number;
+  error: string;
+  expected: string;
+  ip: string;
+  poller: string;
+}
+
+async function pollLatency(targetIp: string): Promise<{
+  status: 'success' | 'missed' | 'system_error';
+  rtt_ms: number | null;
+}> {
+  const url = `${POLLER_BASE_URL}/latency/Sound%20Check/${targetIp}/`;
+  
+  try {
+    const response = await fetch(url, { 
+      signal: AbortSignal.timeout(10000) // 10s timeout
+    });
+    
+    if (!response.ok) {
+      return { status: 'system_error', rtt_ms: null };
+    }
+    
+    const data: PollerResponse = await response.json();
+    
+    if (data.error) {
+      // Check if it's a timeout/unreachable error
+      if (data.error.includes('timeout') || data.error.includes('unreachable')) {
+        return { status: 'missed', rtt_ms: null };
+      }
+      return { status: 'system_error', rtt_ms: null };
+    }
+    
+    if (data.elapsed > 0) {
+      return { status: 'success', rtt_ms: data.elapsed };
+    }
+    
+    return { status: 'missed', rtt_ms: null };
+  } catch (error) {
+    return { status: 'system_error', rtt_ms: null };
+  }
+}
+```
+
+### Scheduler Logic
+
+The service runs a loop that:
+1. Fetches all jobs where `status = 'running'` AND `monitoring_mode = 'real_polling'`
+2. For each job, checks if it's time for the next ping based on `cadence_seconds` and `last_ping_at`
+3. Performs the ping and inserts the sample
+4. Updates `last_ping_at` on the job
+5. Checks if job duration has expired and completes it
+
+### Dockerfile
+
+```dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY dist/ ./dist/
+
+ENV NODE_ENV=production
+
+CMD ["node", "dist/index.js"]
+```
+
+---
+
+## Files to Create
+
+| File | Purpose |
+|------|---------|
+| `poller-service/package.json` | Node.js dependencies |
+| `poller-service/tsconfig.json` | TypeScript config |
+| `poller-service/src/index.ts` | Main scheduler entry |
+| `poller-service/src/poller.ts` | SpreeDB API client |
+| `poller-service/src/supabase.ts` | Supabase client |
+| `poller-service/src/types.ts` | Shared types |
+| `poller-service/Dockerfile` | Container image |
+| `poller-service/.env.example` | Environment vars template |
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `src/components/charts/RTTChart.tsx` | Fix Y-axis domain, scatter rendering, X-axis ticks |
+| Database migration | Add `monitoring_mode` and `last_ping_at` columns |
+| `src/types/index.ts` | Add `MonitoringMode` type to Job interface |
+| `src/pages/CreateJob.tsx` | Add monitoring mode selector |
+| `src/lib/ping-simulator.ts` | Skip simulator for `real_polling` jobs |
 
-## Implementation Details
+---
 
-1. **Calculate explicit Y-axis domain** from successful RTT values
-2. **Replace Scatter components** with ReferenceDot or custom dot rendering that doesn't affect axis scaling
-3. **Show all X-axis ticks** when sample count is small (< 20)
-4. **Enable dots on Line** for better visibility of data points
-5. **Use `yAxisId`** to isolate scatter points from main Y-axis if needed
+## Environment Variables for Poller Service
 
-## Expected Outcome
-- Y-axis properly scaled (0-150ms for this data)
-- RTT line visible with dots at each successful ping
-- Red markers at bottom for missed pings (not affecting Y scale)
-- All sample indices visible on X-axis
-- Outage shading when 5+ consecutive misses exist
+```bash
+# Supabase connection
+SUPABASE_URL=https://clfajqbhpklfrvrrwvjt.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
+
+# Poller configuration
+POLLER_BASE_URL=http://phoenix.polling.corp.cableone.net:4402
+POLL_INTERVAL_MS=5000  # How often to check for jobs needing pings
+```
+
+---
+
+## Security Considerations
+
+1. **Service Role Key**: The poller service uses the Supabase service role key to bypass RLS (needed to insert samples for any job)
+2. **Internal Network**: The poller runs inside the OpenShift cluster with access to the internal polling API
+3. **Read-only External**: The React app continues to use the anon key and RLS policies
+
+---
+
+## OpenShift Deployment Notes
+
+The Dockerfile and service are designed to:
+- Run as a long-lived process (not serverless)
+- Use environment variables for configuration
+- Be stateless (all state in Supabase)
+- Handle graceful shutdown
+
+---
+
+## Implementation Sequence
+
+1. **Database Migration**: Add `monitoring_mode` and `last_ping_at` columns
+2. **Update Types**: Add new fields to TypeScript interfaces
+3. **Update CreateJob**: Add monitoring mode selector UI
+4. **Update Simulator**: Skip browser simulation for real polling jobs
+5. **Create Poller Service**: Standalone Node.js service files
+6. **Test Locally**: Verify the poller can connect to Supabase
+7. **Build Docker Image**: Create container for OpenShift deployment
+
