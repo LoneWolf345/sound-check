@@ -208,3 +208,136 @@ export function isSimulatorRunning(jobId: string): boolean {
 export function getActiveSimulatorCount(): number {
   return activeSimulators.size;
 }
+
+// Check if a job has expired based on its start time and duration
+export function isJobExpired(startedAt: string, durationMinutes: number): boolean {
+  const startTime = new Date(startedAt).getTime();
+  const expectedEndTime = startTime + durationMinutes * 60 * 1000;
+  return Date.now() > expectedEndTime;
+}
+
+// Check and complete all expired running jobs
+export async function checkAndCompleteExpiredJobs(): Promise<{ completed: string[]; resumed: string[] }> {
+  const completed: string[] = [];
+  const resumed: string[] = [];
+
+  // Fetch all running jobs
+  const { data: runningJobs, error } = await supabase
+    .from('jobs')
+    .select('*')
+    .eq('status', 'running');
+
+  if (error || !runningJobs) {
+    console.error('Failed to fetch running jobs:', error);
+    return { completed, resumed };
+  }
+
+  for (const job of runningJobs) {
+    if (isJobExpired(job.started_at, job.duration_minutes)) {
+      // Job should have completed - complete it now
+      await completeJob(job.id);
+      completed.push(job.id);
+      console.log(`Auto-completed expired job ${job.id}`);
+    } else if (!isSimulatorRunning(job.id)) {
+      // Job still has time but simulator isn't running - resume it
+      const { data: existingSamples } = await supabase
+        .from('samples')
+        .select('sequence_number')
+        .eq('job_id', job.id)
+        .order('sequence_number', { ascending: false })
+        .limit(1);
+
+      const lastSequence = existingSamples?.[0]?.sequence_number ?? -1;
+      resumeSimulatorForJob(job, lastSequence + 1);
+      resumed.push(job.id);
+      console.log(`Resumed simulator for job ${job.id} from sequence ${lastSequence + 1}`);
+    }
+  }
+
+  return { completed, resumed };
+}
+
+// Resume simulator for a specific job that hasn't expired yet
+export function resumeSimulatorForJob(
+  job: { id: string; started_at: string; duration_minutes: number; cadence_seconds: number },
+  startSequence: number
+) {
+  // Don't start if already running
+  if (activeSimulators.has(job.id)) {
+    return;
+  }
+
+  const scenario = pickRandomScenario();
+  let sampleIndex = startSequence;
+  const startTime = new Date(job.started_at).getTime();
+  const endTime = startTime + job.duration_minutes * 60 * 1000;
+
+  console.log(`Resuming simulator for job ${job.id} with scenario: ${scenario}, starting at sequence ${sampleIndex}`);
+
+  // Calculate remaining time
+  const remainingMs = endTime - Date.now();
+  if (remainingMs <= 0) {
+    // Job should be completed
+    completeJob(job.id);
+    return;
+  }
+
+  // Insert a sample immediately
+  insertSample(job.id, sampleIndex++, scenario);
+
+  // Set up interval for subsequent samples
+  const intervalId = setInterval(async () => {
+    const now = Date.now();
+
+    // Check if job should complete
+    if (now >= endTime) {
+      stopSimulator(job.id);
+      await completeJob(job.id);
+      return;
+    }
+
+    // Insert next sample
+    await insertSample(job.id, sampleIndex++, scenario);
+  }, job.cadence_seconds * 1000);
+
+  activeSimulators.set(job.id, intervalId);
+}
+
+// Check and handle a single job - complete if expired, resume if still running
+export async function checkAndHandleJob(jobId: string): Promise<'completed' | 'resumed' | 'already_running' | 'not_found'> {
+  const { data: job, error } = await supabase
+    .from('jobs')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle();
+
+  if (error || !job) {
+    console.error('Failed to fetch job:', error);
+    return 'not_found';
+  }
+
+  if (job.status !== 'running') {
+    return 'not_found';
+  }
+
+  if (isJobExpired(job.started_at, job.duration_minutes)) {
+    await completeJob(job.id);
+    return 'completed';
+  }
+
+  if (isSimulatorRunning(job.id)) {
+    return 'already_running';
+  }
+
+  // Resume the simulator
+  const { data: existingSamples } = await supabase
+    .from('samples')
+    .select('sequence_number')
+    .eq('job_id', jobId)
+    .order('sequence_number', { ascending: false })
+    .limit(1);
+
+  const lastSequence = existingSamples?.[0]?.sequence_number ?? -1;
+  resumeSimulatorForJob(job, lastSequence + 1);
+  return 'resumed';
+}

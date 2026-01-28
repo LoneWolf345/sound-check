@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Activity, Clock, AlertTriangle, Eye, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -6,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { useJobStats, useRecentJobs } from '@/hooks/use-jobs';
 import { formatDateTime, formatDurationFromMinutes } from '@/lib/format';
+import { checkAndCompleteExpiredJobs } from '@/lib/ping-simulator';
+import { useQueryClient } from '@tanstack/react-query';
 import type { JobStatus } from '@/types';
 
 function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -26,9 +29,26 @@ function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'de
 export default function Dashboard() {
   const navigate = useNavigate();
   const { internalUser: user } = useAuthContext();
+  const queryClient = useQueryClient();
+  const hasCheckedExpiredJobs = useRef(false);
 
   const { data: stats, isLoading: statsLoading } = useJobStats();
   const { data: recentJobs, isLoading: recentJobsLoading } = useRecentJobs(user?.id);
+
+  // Check and complete any expired jobs on dashboard load
+  useEffect(() => {
+    if (hasCheckedExpiredJobs.current) return;
+    hasCheckedExpiredJobs.current = true;
+
+    checkAndCompleteExpiredJobs().then(({ completed, resumed }) => {
+      if (completed.length > 0 || resumed.length > 0) {
+        console.log(`Dashboard cleanup: ${completed.length} jobs completed, ${resumed.length} jobs resumed`);
+        queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        queryClient.invalidateQueries({ queryKey: ['job-stats'] });
+        queryClient.invalidateQueries({ queryKey: ['recent-jobs'] });
+      }
+    });
+  }, [queryClient]);
 
   return (
     <div className="space-y-6">
