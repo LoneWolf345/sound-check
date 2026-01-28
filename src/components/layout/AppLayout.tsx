@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Menu,
   X,
+  AudioWaveform,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,11 +55,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Logo */}
           <RouterNavLink to="/" className="mr-6 flex items-center space-x-2">
-            <div className="h-6 w-6 rounded bg-primary flex items-center justify-center">
-              <span className="text-xs font-bold text-primary-foreground">MM</span>
-            </div>
+            <AudioWaveform className="h-6 w-6 text-primary" />
             <span className="hidden font-semibold sm:inline-block">
-              Modem Monitor
+              Soundcheck
             </span>
           </RouterNavLink>
 

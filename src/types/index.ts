@@ -1,4 +1,4 @@
-// Job and monitoring types for the Modem Monitoring Tool
+// Soundcheck - Connectivity Monitoring Tool
 
 export type JobStatus = 'running' | 'completed' | 'cancelled' | 'failed';
 export type SampleStatus = 'success' | 'missed' | 'system_error';
