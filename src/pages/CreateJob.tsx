@@ -29,7 +29,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useUser } from '@/contexts/UserContext';
 import { isValidMacAddress, isValidIpAddress, formatDurationFromMinutes, formatCadence, convertToMinutes } from '@/lib/format';
 import { mockValidateAccount, type MockBillingAccount } from '@/lib/mock-data';
-import { useCreateJob, checkUsageLimits } from '@/hooks/use-jobs';
+import { useCreateJob, checkUsageLimits, checkDuplicateRunningJob } from '@/hooks/use-jobs';
 import { useAdminConfig } from '@/hooks/use-admin-config';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { startSimulator } from '@/lib/ping-simulator';
@@ -158,6 +158,24 @@ export default function CreateJob() {
           description: limitCheck.reason,
           variant: 'destructive',
         });
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Check for duplicate running jobs
+      const targetMac = data.targetType === 'mac' ? data.targetMac ?? null : null;
+      const targetIp = data.targetType === 'ip' ? data.targetIp ?? null : (accountData?.modems[0]?.managementIp ?? null);
+
+      const duplicateCheck = await checkDuplicateRunningJob(targetMac, targetIp);
+      if (duplicateCheck.isDuplicate) {
+        toast({
+          title: 'Duplicate Job Detected',
+          description: `A monitoring job is already running for this ${duplicateCheck.matchType} address. View or cancel the existing job first.`,
+          variant: 'destructive',
+        });
+        if (duplicateCheck.existingJobId) {
+          navigate(`/jobs/${duplicateCheck.existingJobId}`);
+        }
         setIsSubmitting(false);
         return;
       }

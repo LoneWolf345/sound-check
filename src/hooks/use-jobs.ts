@@ -198,6 +198,51 @@ export function useCancelJob() {
   });
 }
 
+// Normalize MAC address for consistent comparison
+function normalizeMac(mac: string): string {
+  return mac.replace(/[:-]/g, '').toUpperCase();
+}
+
+// Check for duplicate running jobs by target MAC or IP
+export async function checkDuplicateRunningJob(
+  targetMac: string | null,
+  targetIp: string | null
+): Promise<{ isDuplicate: boolean; existingJobId?: string; matchType?: 'MAC' | 'IP' }> {
+  // Check MAC if provided
+  if (targetMac) {
+    const normalizedMac = normalizeMac(targetMac);
+    const { data: runningJobs } = await supabase
+      .from('jobs')
+      .select('id, target_mac')
+      .eq('status', 'running');
+    
+    if (runningJobs) {
+      const matchingJob = runningJobs.find(
+        (job) => job.target_mac && normalizeMac(job.target_mac) === normalizedMac
+      );
+      if (matchingJob) {
+        return { isDuplicate: true, existingJobId: matchingJob.id, matchType: 'MAC' };
+      }
+    }
+  }
+
+  // Check IP if provided
+  if (targetIp) {
+    const { data: ipMatches } = await supabase
+      .from('jobs')
+      .select('id')
+      .eq('status', 'running')
+      .eq('target_ip', targetIp)
+      .limit(1);
+    
+    if (ipMatches && ipMatches.length > 0) {
+      return { isDuplicate: true, existingJobId: ipMatches[0].id, matchType: 'IP' };
+    }
+  }
+
+  return { isDuplicate: false };
+}
+
 // Complete a job
 export function useCompleteJob() {
   const queryClient = useQueryClient();
