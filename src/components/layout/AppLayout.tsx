@@ -58,7 +58,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <RouterNavLink to="/" className="mr-6 flex items-center space-x-2">
             <AudioWaveform className="h-6 w-6 text-primary" />
             <span className="hidden font-semibold sm:inline-block">
-              Soundcheck
+              Sound Check
             </span>
           </RouterNavLink>
 

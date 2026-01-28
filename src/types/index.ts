@@ -1,4 +1,4 @@
-// Soundcheck - Connectivity Monitoring Tool
+// Sound Check - Connectivity Monitoring Tool
 
 export type JobStatus = 'running' | 'completed' | 'cancelled' | 'failed';
 export type SampleStatus = 'success' | 'missed' | 'system_error';
