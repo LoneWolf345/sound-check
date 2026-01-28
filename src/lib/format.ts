@@ -1,4 +1,30 @@
 import { format, formatDistanceToNow, formatDuration, intervalToDuration } from 'date-fns';
+import type { DurationUnit, DurationPreset } from '@/types';
+
+export function convertToMinutes(value: number, unit: DurationUnit): number {
+  switch (unit) {
+    case 'minutes': return value;
+    case 'hours': return value * 60;
+    case 'days': return value * 1440;
+  }
+}
+
+export function findBestUnit(minutes: number): DurationPreset {
+  if (minutes >= 1440 && minutes % 1440 === 0) {
+    return { value: minutes / 1440, unit: 'days' };
+  }
+  if (minutes >= 60 && minutes % 60 === 0) {
+    return { value: minutes / 60, unit: 'hours' };
+  }
+  return { value: minutes, unit: 'minutes' };
+}
+
+export function formatDurationPreset(preset: DurationPreset): string {
+  const { value, unit } = preset;
+  if (unit === 'minutes') return `${value} min`;
+  if (unit === 'hours') return value === 1 ? '1 hour' : `${value} hours`;
+  return value === 1 ? '1 day' : `${value} days`;
+}
 
 export function formatDateTime(date: string | Date): string {
   return format(new Date(date), 'MMM d, yyyy h:mm a');

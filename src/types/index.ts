@@ -73,9 +73,16 @@ export interface UserRole {
 }
 
 // Config value types
+export type DurationUnit = 'minutes' | 'hours' | 'days';
+
+export interface DurationPreset {
+  value: number;
+  unit: DurationUnit;
+}
+
 export interface DurationPresetsConfig {
-  presets: number[]; // in minutes
-  default: number;
+  presets: DurationPreset[];
+  default: number; // in minutes for backward compatibility
 }
 
 export interface CadencePresetsConfig {

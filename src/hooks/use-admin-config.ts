@@ -1,13 +1,42 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import type { AdminConfig, DurationPresetsConfig, CadencePresetsConfig, ThresholdsConfig, UsageLimitsConfig, WebhookConfig } from '@/types';
+import type { AdminConfig, DurationPresetsConfig, CadencePresetsConfig, ThresholdsConfig, UsageLimitsConfig, WebhookConfig, DurationPreset } from '@/types';
 import type { Json } from '@/integrations/supabase/types';
+import { findBestUnit } from '@/lib/format';
 
 // Default configurations
 const DEFAULT_DURATION_PRESETS: DurationPresetsConfig = {
-  presets: [60, 180, 360, 720, 1440, 2880],
+  presets: [
+    { value: 1, unit: 'hours' },
+    { value: 3, unit: 'hours' },
+    { value: 6, unit: 'hours' },
+    { value: 12, unit: 'hours' },
+    { value: 1, unit: 'days' },
+    { value: 2, unit: 'days' },
+  ],
   default: 60,
 };
+
+// Migrate old format (array of numbers) to new format (array of objects)
+function migrateDurationPresets(config: unknown): DurationPresetsConfig {
+  if (!config || typeof config !== 'object') return DEFAULT_DURATION_PRESETS;
+  
+  const cfg = config as { presets?: unknown; default?: number };
+  
+  if (Array.isArray(cfg.presets) && cfg.presets.length > 0) {
+    // Check if it's old format (array of numbers)
+    if (typeof cfg.presets[0] === 'number') {
+      return {
+        presets: (cfg.presets as number[]).map((m) => findBestUnit(m)),
+        default: cfg.default ?? 60,
+      };
+    }
+    // Already new format
+    return cfg as DurationPresetsConfig;
+  }
+  
+  return DEFAULT_DURATION_PRESETS;
+}
 
 const DEFAULT_CADENCE_PRESETS: CadencePresetsConfig = {
   presets: [10, 60, 300],
@@ -65,7 +94,7 @@ export function useAdminConfig() {
       }
 
       return {
-        durationPresets: (configMap.duration_presets?.value as unknown as DurationPresetsConfig) ?? DEFAULT_DURATION_PRESETS,
+        durationPresets: migrateDurationPresets(configMap.duration_presets?.value),
         cadencePresets: (configMap.cadence_presets?.value as unknown as CadencePresetsConfig) ?? DEFAULT_CADENCE_PRESETS,
         thresholds: (configMap.thresholds?.value as unknown as ThresholdsConfig) ?? DEFAULT_THRESHOLDS,
         usageLimits: (configMap.usage_limits?.value as unknown as UsageLimitsConfig) ?? DEFAULT_USAGE_LIMITS,

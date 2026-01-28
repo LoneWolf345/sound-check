@@ -1,7 +1,7 @@
 import { useUser } from '@/contexts/UserContext';
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Settings, Clock, Activity, Gauge, Users, Save, Loader2 } from 'lucide-react';
+import { Settings, Clock, Activity, Gauge, Users, Save, Loader2, Plus } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,8 @@ import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { useAdminConfig, useUpdateAdminConfig } from '@/hooks/use-admin-config';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
-import type { DurationPresetsConfig, CadencePresetsConfig, ThresholdsConfig, UsageLimitsConfig, WebhookConfig } from '@/types';
+import { DurationPresetEditor } from '@/components/admin/DurationPresetEditor';
+import type { DurationPresetsConfig, CadencePresetsConfig, ThresholdsConfig, UsageLimitsConfig, WebhookConfig, DurationPreset } from '@/types';
 
 export default function AdminSettings() {
   const { isAdmin, user } = useUser();
@@ -22,7 +23,14 @@ export default function AdminSettings() {
 
   // Local form state
   const [durationPresets, setDurationPresets] = useState<DurationPresetsConfig>({
-    presets: [60, 180, 360, 720, 1440, 2880],
+    presets: [
+      { value: 1, unit: 'hours' },
+      { value: 3, unit: 'hours' },
+      { value: 6, unit: 'hours' },
+      { value: 12, unit: 'hours' },
+      { value: 1, unit: 'days' },
+      { value: 2, unit: 'days' },
+    ],
     default: 60,
   });
   const [cadencePresets, setCadencePresets] = useState<CadencePresetsConfig>({
@@ -157,23 +165,40 @@ export default function AdminSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            {durationPresets.presets.map((minutes, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  value={minutes}
-                  onChange={(e) => {
-                    const newPresets = [...durationPresets.presets];
-                    newPresets[index] = parseInt(e.target.value) || 0;
-                    setDurationPresets({ ...durationPresets, presets: newPresets });
-                  }}
-                  className="w-24"
-                />
-                <span className="text-sm text-muted-foreground">minutes</span>
-              </div>
+          <div className="space-y-3">
+            {durationPresets.presets.map((preset, index) => (
+              <DurationPresetEditor
+                key={index}
+                preset={preset}
+                onChange={(newPreset) => {
+                  const newPresets = [...durationPresets.presets];
+                  newPresets[index] = newPreset;
+                  setDurationPresets({ ...durationPresets, presets: newPresets });
+                }}
+                onDelete={() => {
+                  const newPresets = durationPresets.presets.filter((_, i) => i !== index);
+                  setDurationPresets({ ...durationPresets, presets: newPresets });
+                }}
+                canDelete={durationPresets.presets.length > 1}
+              />
             ))}
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setDurationPresets({
+                ...durationPresets,
+                presets: [...durationPresets.presets, { value: 1, unit: 'hours' }],
+              });
+            }}
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Add Duration Preset
+          </Button>
+          <Separator />
           <div className="flex items-center gap-2">
             <Label>Default:</Label>
             <Input
