@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Eye, XCircle, Activity } from 'lucide-react';
+import { Search, Filter, Eye, XCircle, Activity, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,75 +20,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { formatDateTime, formatDurationFromMinutes, formatCadence } from '@/lib/format';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { formatDateTime, formatDurationFromMinutes } from '@/lib/format';
+import { useJobs, useCancelJob } from '@/hooks/use-jobs';
+import { createAuditLogEntry } from '@/hooks/use-audit-log';
+import { useUser } from '@/contexts/UserContext';
+import { useToast } from '@/hooks/use-toast';
+import { stopSimulator } from '@/lib/ping-simulator';
 import type { Job, JobStatus } from '@/types';
-
-// Mock data for development
-const MOCK_JOBS: Job[] = [
-  {
-    id: 'job-1',
-    account_number: '123456789',
-    target_mac: '00:1A:2B:3C:4D:5E',
-    target_ip: '10.20.30.40',
-    duration_minutes: 60,
-    cadence_seconds: 60,
-    reason: 'reactive',
-    notification_email: 'john.smith@company.com',
-    alert_on_offline: true,
-    alert_on_recovery: true,
-    status: 'running',
-    alert_state: 'ok',
-    requester_id: 'user-1',
-    requester_name: 'John Smith',
-    source: 'web_app',
-    started_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-    completed_at: null,
-    cancelled_at: null,
-    created_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'job-2',
-    account_number: '234567890',
-    target_mac: '00:2B:3C:4D:5E:6F',
-    target_ip: '10.30.40.50',
-    duration_minutes: 180,
-    cadence_seconds: 60,
-    reason: 'proactive',
-    notification_email: 'jane.doe@company.com',
-    alert_on_offline: true,
-    alert_on_recovery: false,
-    status: 'completed',
-    alert_state: 'ok',
-    requester_id: 'user-2',
-    requester_name: 'Jane Doe',
-    source: 'web_app',
-    started_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-    completed_at: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
-    cancelled_at: null,
-    created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'job-3',
-    account_number: '345678901',
-    target_mac: null,
-    target_ip: '10.40.50.60',
-    duration_minutes: 720,
-    cadence_seconds: 300,
-    reason: 'reactive',
-    notification_email: 'john.smith@company.com',
-    alert_on_offline: false,
-    alert_on_recovery: false,
-    status: 'cancelled',
-    alert_state: 'ok',
-    requester_id: 'user-1',
-    requester_name: 'John Smith',
-    source: 'tempo',
-    started_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    completed_at: null,
-    cancelled_at: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
-    created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-  },
-];
 
 function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
   switch (status) {
@@ -107,22 +56,60 @@ function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'de
 
 export default function JobList() {
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const { user } = useUser();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'all'>('all');
+  const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
 
-  // Filter jobs based on search and status
-  const filteredJobs = MOCK_JOBS.filter((job) => {
-    const matchesSearch =
-      searchQuery === '' ||
-      job.account_number.includes(searchQuery) ||
-      job.target_mac?.includes(searchQuery) ||
-      job.target_ip?.includes(searchQuery) ||
-      job.id.includes(searchQuery);
-
-    const matchesStatus = statusFilter === 'all' || job.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
+  const { data: jobs, isLoading, error } = useJobs({
+    status: statusFilter,
+    search: searchQuery || undefined,
   });
+
+  const cancelJobMutation = useCancelJob();
+
+  async function handleCancelJob(job: Job) {
+    if (!user) return;
+
+    setCancellingJobId(job.id);
+    try {
+      // Stop the simulator if running
+      stopSimulator(job.id);
+
+      // Cancel the job in database
+      await cancelJobMutation.mutateAsync(job.id);
+
+      // Create audit log entry
+      await createAuditLogEntry({
+        action: 'job.cancel',
+        entityType: 'job',
+        entityId: job.id,
+        actorId: user.id,
+        actorName: user.name,
+        details: {
+          account_number: job.account_number,
+          cancelled_after_minutes: Math.round(
+            (Date.now() - new Date(job.started_at).getTime()) / 60000
+          ),
+        },
+      });
+
+      toast({
+        title: 'Job Cancelled',
+        description: 'The monitoring job has been cancelled.',
+      });
+    } catch (error) {
+      console.error('Failed to cancel job:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to cancel job. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCancellingJobId(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -171,11 +158,20 @@ export default function JobList() {
         <CardHeader>
           <CardTitle>Jobs</CardTitle>
           <CardDescription>
-            {filteredJobs.length} job{filteredJobs.length !== 1 ? 's' : ''} found
+            {isLoading ? 'Loading...' : `${jobs?.length ?? 0} job${jobs?.length !== 1 ? 's' : ''} found`}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {filteredJobs.length === 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <div className="text-center py-8 text-destructive">
+              <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>Failed to load jobs. Please try again.</p>
+            </div>
+          ) : !jobs || jobs.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Activity className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>No jobs found matching your criteria.</p>
@@ -194,7 +190,7 @@ export default function JobList() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredJobs.map((job) => (
+                {jobs.map((job) => (
                   <TableRow key={job.id}>
                     <TableCell className="font-medium">{job.account_number}</TableCell>
                     <TableCell className="font-mono text-sm">
@@ -224,13 +220,40 @@ export default function JobList() {
                           <Eye className="h-4 w-4" />
                         </Button>
                         {job.status === 'running' && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-destructive hover:text-destructive"
-                          >
-                            <XCircle className="h-4 w-4" />
-                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                disabled={cancellingJobId === job.id}
+                              >
+                                {cancellingJobId === job.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <XCircle className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Cancel Monitoring Job?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will stop monitoring for account {job.account_number}.
+                                  This action cannot be undone.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Keep Running</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => handleCancelJob(job)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Cancel Job
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
                         )}
                       </div>
                     </TableCell>
@@ -242,5 +265,26 @@ export default function JobList() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function AlertCircle(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" x2="12" y1="8" y2="12" />
+      <line x1="12" x2="12.01" y1="16" y2="16" />
+    </svg>
   );
 }
