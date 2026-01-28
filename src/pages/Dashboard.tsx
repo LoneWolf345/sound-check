@@ -3,7 +3,7 @@ import { Plus, Activity, Clock, AlertTriangle, Eye, Loader2 } from 'lucide-react
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useUser } from '@/contexts/UserContext';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { useJobStats, useRecentJobs } from '@/hooks/use-jobs';
 import { formatDateTime, formatDurationFromMinutes } from '@/lib/format';
 import type { JobStatus } from '@/types';
@@ -25,7 +25,7 @@ function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'de
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useUser();
+  const { internalUser: user } = useAuthContext();
 
   const { data: stats, isLoading: statsLoading } = useJobStats();
   const { data: recentJobs, isLoading: recentJobsLoading } = useRecentJobs(user?.id);

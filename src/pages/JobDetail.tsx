@@ -36,7 +36,7 @@ import { calculateJobSummary } from '@/lib/calculations';
 import { useJob, useJobSamples, useCancelJob } from '@/hooks/use-jobs';
 import { useJobAlerts } from '@/hooks/use-alerts';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
-import { useUser } from '@/contexts/UserContext';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { stopSimulator } from '@/lib/ping-simulator';
 import { supabase } from '@/integrations/supabase/client';
@@ -73,7 +73,7 @@ export default function JobDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useUser();
+  const { internalUser: user } = useAuthContext();
   const queryClient = useQueryClient();
 
   const { data: job, isLoading: jobLoading, error: jobError } = useJob(id);

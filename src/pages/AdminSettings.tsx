@@ -1,4 +1,4 @@
-import { useUser } from '@/contexts/UserContext';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Settings, Clock, Activity, Gauge, Users, Save, Loader2, Plus } from 'lucide-react';
@@ -14,7 +14,7 @@ import { DurationPresetEditor } from '@/components/admin/DurationPresetEditor';
 import type { DurationPresetsConfig, CadencePresetsConfig, ThresholdsConfig, UsageLimitsConfig, WebhookConfig, DurationPreset } from '@/types';
 
 export default function AdminSettings() {
-  const { isAdmin, user } = useUser();
+  const { isAdmin, internalUser: user } = useAuthContext();
   const navigate = useNavigate();
   const { toast } = useToast();
 
