@@ -323,7 +323,7 @@ function generateEmailHtml(job: Job, summary: JobSummary, jobDetailUrl: string):
                 Generated: ${formatDate(new Date().toISOString())}
               </p>
               <p style="margin: 8px 0 0 0; color: #a1a1aa; font-size: 11px;">
-                This is an automated notification from Soundcheck.
+                This is an automated notification from Sound Check.
               </p>
             </td>
           </tr>
@@ -455,7 +455,7 @@ const handler = async (req: Request): Promise<Response> => {
     const resultText = summary.overallPass ? "PASS" : "FAIL";
 
     const emailResponse = await resend.emails.send({
-      from: "Soundcheck <noreply@resend.dev>",
+      from: "Sound Check <noreply@resend.dev>",
       to: [job.notification_email],
       subject: `[${resultText}] Monitoring Job Completed - Account ${job.account_number}`,
       html: emailHtml,
