@@ -81,32 +81,19 @@ export default function JobDetail() {
   const { data: alerts = [] } = useJobAlerts(id);
   const cancelJobMutation = useCancelJob();
 
-  // Subscribe to real-time sample updates
+  // Subscribe to real-time updates for samples, job, and alerts
   useEffect(() => {
-    if (!id || job?.status !== 'running') return;
+    if (!id) return;
 
-    const channel = supabase
-      .channel(`samples:${id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'samples',
-          filter: `job_id=eq.${id}`,
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['samples', id] });
-        }
-      )
-      .subscribe();
+    const channels: ReturnType<typeof supabase.channel>[] = [];
 
+    // Always subscribe to job updates (status changes, completion, etc.)
     const jobChannel = supabase
       .channel(`job:${id}`)
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'jobs',
           filter: `id=eq.${id}`,
@@ -116,10 +103,48 @@ export default function JobDetail() {
         }
       )
       .subscribe();
+    channels.push(jobChannel);
+
+    // Subscribe to sample updates for running jobs
+    if (job?.status === 'running') {
+      const samplesChannel = supabase
+        .channel(`samples:${id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'samples',
+            filter: `job_id=eq.${id}`,
+          },
+          () => {
+            queryClient.invalidateQueries({ queryKey: ['samples', id] });
+          }
+        )
+        .subscribe();
+      channels.push(samplesChannel);
+    }
+
+    // Subscribe to alert updates
+    const alertsChannel = supabase
+      .channel(`alerts:${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'alerts',
+          filter: `job_id=eq.${id}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['alerts', id] });
+        }
+      )
+      .subscribe();
+    channels.push(alertsChannel);
 
     return () => {
-      supabase.removeChannel(channel);
-      supabase.removeChannel(jobChannel);
+      channels.forEach((channel) => supabase.removeChannel(channel));
     };
   }, [id, job?.status, queryClient]);
 
