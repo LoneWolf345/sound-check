@@ -1,4 +1,4 @@
 project_id = "clfajqbhpklfrvrrwvjt"
 
 [functions.send-completion-email]
-verify_jwt = false
+verify_jwt = true
