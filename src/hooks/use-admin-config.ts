@@ -30,14 +30,14 @@ const DEFAULT_WEBHOOK: WebhookConfig = {
   secret: null,
 };
 
-type ConfigKey = 'duration_presets' | 'cadence_presets' | 'thresholds' | 'usage_limits' | 'webhook';
+type ConfigKey = 'duration_presets' | 'cadence_presets' | 'thresholds' | 'usage_limits' | 'webhook_config';
 
 type ConfigValueMap = {
   duration_presets: DurationPresetsConfig;
   cadence_presets: CadencePresetsConfig;
   thresholds: ThresholdsConfig;
   usage_limits: UsageLimitsConfig;
-  webhook: WebhookConfig;
+  webhook_config: WebhookConfig;
 };
 
 const DEFAULT_VALUES: ConfigValueMap = {
@@ -45,7 +45,7 @@ const DEFAULT_VALUES: ConfigValueMap = {
   cadence_presets: DEFAULT_CADENCE_PRESETS,
   thresholds: DEFAULT_THRESHOLDS,
   usage_limits: DEFAULT_USAGE_LIMITS,
-  webhook: DEFAULT_WEBHOOK,
+  webhook_config: DEFAULT_WEBHOOK,
 };
 
 // Fetch all admin configuration
@@ -69,7 +69,7 @@ export function useAdminConfig() {
         cadencePresets: (configMap.cadence_presets?.value as unknown as CadencePresetsConfig) ?? DEFAULT_CADENCE_PRESETS,
         thresholds: (configMap.thresholds?.value as unknown as ThresholdsConfig) ?? DEFAULT_THRESHOLDS,
         usageLimits: (configMap.usage_limits?.value as unknown as UsageLimitsConfig) ?? DEFAULT_USAGE_LIMITS,
-        webhook: (configMap.webhook?.value as unknown as WebhookConfig) ?? DEFAULT_WEBHOOK,
+        webhook: (configMap.webhook_config?.value as unknown as WebhookConfig) ?? DEFAULT_WEBHOOK,
         raw: configMap,
       };
     },
@@ -85,7 +85,7 @@ export function useConfigValue<K extends ConfigKey>(key: K) {
     cadence_presets: 'cadencePresets',
     thresholds: 'thresholds',
     usage_limits: 'usageLimits',
-    webhook: 'webhook',
+    webhook_config: 'webhook',
   };
 
   return {
@@ -117,10 +117,9 @@ export function useUpdateAdminConfig() {
             updated_at: new Date().toISOString(),
           })
           .eq('key', key)
-          .select()
-          .single();
+          .select();
         if (error) throw error;
-        return data;
+        return data?.[0] ?? null;
       } else {
         // Insert new
         const { data, error } = await supabase
@@ -130,10 +129,9 @@ export function useUpdateAdminConfig() {
             value: value as unknown as Json,
             updated_by: updatedBy ?? null,
           })
-          .select()
-          .single();
+          .select();
         if (error) throw error;
-        return data;
+        return data?.[0] ?? null;
       }
     },
     onSuccess: () => {
