@@ -1,77 +1,62 @@
 
-# Fix Stuck Jobs - Auto-Complete Expired Jobs
+# Fix RTTChart Display Issues
 
-## Problem Summary
-The ping simulator runs entirely in the browser. When the browser tab is closed or the user navigates away, the `setInterval` stops and jobs never complete. This job should have finished 13+ hours ago.
+## Problem Analysis
+The chart has several rendering issues:
+1. **Y-axis scale is incorrect** - Shows 0-4ms when actual data ranges from 29-131ms
+2. **RTT line is not visible** - Being drawn off the visible Y-axis scale
+3. **Sparse X-axis labels** - Only showing #3 and #5 instead of all sample indices
 
-## Solution Overview
-Add logic to automatically detect and complete expired jobs, plus resume simulators for jobs that haven't expired yet.
+### Root Cause
+The `Scatter` components use separate `data` arrays with `y: 0` values. When Recharts calculates the Y-axis domain, it's including these zero values and ignoring the actual RTT data from the Line component, resulting in a 0-4ms scale instead of the proper 0-150ms scale.
 
----
+## Solution
 
-## Implementation Steps
+### 1. Fix Y-axis Domain Calculation
+Explicitly calculate Y-axis domain from RTT values instead of relying on auto-scaling:
 
-### 1. Add Expired Job Detection Utility
-Create a new function in `src/lib/ping-simulator.ts`:
-
-| Function | Purpose |
-|----------|---------|
-| `checkAndCompleteExpiredJobs()` | Query for running jobs past their expected end time and mark them complete |
-| `resumeSimulatorIfNeeded()` | For running jobs not yet expired, resume the simulator from where it left off |
-
-### 2. Update Job Detail Page
-Modify `src/pages/JobDetail.tsx` to:
-- Check if a running job has expired and complete it automatically
-- Resume the simulator for running jobs that still have time remaining
-- Show appropriate messaging when a job is auto-completed
-
-### 3. Update Dashboard
-Modify `src/pages/Dashboard.tsx` to:
-- Run expired job check on load to clean up stuck jobs system-wide
-
-### 4. Trigger Email on Auto-Complete
-Ensure the completion email is sent when jobs are auto-completed (may need to handle the case where no authenticated session exists for background completion).
-
----
-
-## Technical Details
-
-### Expired Job Check Logic
-```text
-For each running job:
-  expected_end_time = started_at + duration_minutes
-  
-  IF now > expected_end_time:
-    Mark job as completed
-    Trigger completion email
-  ELSE IF simulator not running:
-    Resume simulator for remaining time
+```typescript
+const maxRtt = Math.max(...rttValues.filter(v => v !== null), 0);
+const yDomain = [0, Math.max(maxRtt * 1.1, 10)]; // 10% padding, min 10ms
 ```
 
-### New Functions in ping-simulator.ts
+### 2. Fix Scatter Component Rendering
+Instead of using separate `data` arrays for Scatter (which breaks Y-axis), render markers differently:
+- Use `dot` prop on Line component with custom render for successful points
+- Render missed/error markers using `customized` component or ReferenceDot
 
-1. **`checkAndCompleteExpiredJob(job)`** - Complete a single expired job
-2. **`resumeSimulatorForJob(job, existingSampleCount)`** - Resume simulator from last sample
+### 3. Improve X-axis Tick Display
+Configure XAxis to show more tick marks for better visibility:
 
-### Files to Modify
+```typescript
+<XAxis 
+  dataKey="index"
+  tickFormatter={(i) => `#${i + 1}`}
+  interval={0} // Show all ticks for small datasets
+  tick={{ fontSize: 10 }}
+/>
+```
+
+### 4. Add Dots for Successful Pings
+Enable dots on the line to make data points more visible, especially when there are gaps from missed pings.
+
+## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `src/lib/ping-simulator.ts` | Add `checkAndCompleteExpiredJob()`, `resumeSimulatorForJob()` |
-| `src/pages/JobDetail.tsx` | Auto-complete/resume on page load for running jobs |
-| `src/pages/Dashboard.tsx` | Run expired check on mount |
-| `src/hooks/use-jobs.ts` | Add `useCompleteExpiredJobs()` hook (optional) |
+| `src/components/charts/RTTChart.tsx` | Fix Y-axis domain, scatter rendering, X-axis ticks |
 
----
+## Implementation Details
 
-## Edge Cases Handled
+1. **Calculate explicit Y-axis domain** from successful RTT values
+2. **Replace Scatter components** with ReferenceDot or custom dot rendering that doesn't affect axis scaling
+3. **Show all X-axis ticks** when sample count is small (< 20)
+4. **Enable dots on Line** for better visibility of data points
+5. **Use `yAxisId`** to isolate scatter points from main Y-axis if needed
 
-1. **Job expired while away** - Auto-completed with existing samples
-2. **Job still has time left** - Simulator resumes from last sequence number
-3. **No auth session** - Completion email logs warning but job still completes
-4. **Multiple stuck jobs** - All expired jobs cleaned up on Dashboard load
-
-## Notes
-- This is a client-side fix for the simulator architecture
-- For production reliability, a backend cron job would be the ideal long-term solution
-- The existing samples are preserved - only status and completed_at are updated
+## Expected Outcome
+- Y-axis properly scaled (0-150ms for this data)
+- RTT line visible with dots at each successful ping
+- Red markers at bottom for missed pings (not affecting Y scale)
+- All sample indices visible on X-axis
+- Outage shading when 5+ consecutive misses exist
