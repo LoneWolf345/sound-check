@@ -94,7 +94,7 @@ export default function AdminSettings() {
           updatedBy: user.id,
         }),
         updateConfigMutation.mutateAsync({
-          key: 'webhook',
+          key: 'webhook_config',
           value: webhook,
           updatedBy: user.id,
         }),
