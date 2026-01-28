@@ -29,6 +29,10 @@ import { useToast } from '@/hooks/use-toast';
 import { useUser } from '@/contexts/UserContext';
 import { isValidMacAddress, isValidIpAddress, formatDurationFromMinutes, formatCadence } from '@/lib/format';
 import { mockValidateAccount, type MockBillingAccount } from '@/lib/mock-data';
+import { useCreateJob, checkUsageLimits } from '@/hooks/use-jobs';
+import { useAdminConfig } from '@/hooks/use-admin-config';
+import { createAuditLogEntry } from '@/hooks/use-audit-log';
+import { startSimulator } from '@/lib/ping-simulator';
 
 const jobFormSchema = z.object({
   accountNumber: z.string().min(9, 'Account number must be at least 9 digits').max(12),
@@ -54,22 +58,6 @@ const jobFormSchema = z.object({
 
 type JobFormValues = z.infer<typeof jobFormSchema>;
 
-// Preset options (will come from admin config later)
-const DURATION_PRESETS = [
-  { value: 60, label: '1 hour' },
-  { value: 180, label: '3 hours' },
-  { value: 360, label: '6 hours' },
-  { value: 720, label: '12 hours' },
-  { value: 1440, label: '1 day' },
-  { value: 2880, label: '2 days' },
-];
-
-const CADENCE_PRESETS = [
-  { value: 10, label: '10 seconds' },
-  { value: 60, label: '1 minute' },
-  { value: 300, label: '5 minutes' },
-];
-
 export default function CreateJob() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -77,6 +65,20 @@ export default function CreateJob() {
   const [isValidating, setIsValidating] = useState(false);
   const [accountData, setAccountData] = useState<MockBillingAccount | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const createJobMutation = useCreateJob();
+  const { data: adminConfig } = useAdminConfig();
+
+  // Get presets from admin config or use defaults
+  const durationPresets = adminConfig?.durationPresets ?? {
+    presets: [60, 180, 360, 720, 1440, 2880],
+    default: 60,
+  };
+  const cadencePresets = adminConfig?.cadencePresets ?? {
+    presets: [10, 60, 300],
+    default: 60,
+  };
 
   const form = useForm<JobFormValues>({
     resolver: zodResolver(jobFormSchema),
@@ -85,8 +87,8 @@ export default function CreateJob() {
       targetType: 'mac',
       targetMac: '',
       targetIp: '',
-      durationMinutes: 60,
-      cadenceSeconds: 60,
+      durationMinutes: durationPresets.default,
+      cadenceSeconds: cadencePresets.default,
       reason: 'reactive',
       notificationEmail: user?.email ?? '',
       alertOnOffline: true,
@@ -127,15 +129,80 @@ export default function CreateJob() {
   }
 
   async function onSubmit(data: JobFormValues) {
-    // TODO: Implement actual job creation via Supabase
-    console.log('Creating job:', data);
-    
-    toast({
-      title: 'Job Created',
-      description: 'Monitoring job has been started successfully.',
-    });
-    
-    navigate('/jobs');
+    if (!user) {
+      toast({
+        title: 'Error',
+        description: 'User not found. Please refresh the page.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // Check usage limits
+      const limitCheck = await checkUsageLimits(user.id);
+      if (!limitCheck.canCreate) {
+        toast({
+          title: 'Limit Exceeded',
+          description: limitCheck.reason,
+          variant: 'destructive',
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Create the job
+      const job = await createJobMutation.mutateAsync({
+        account_number: data.accountNumber,
+        target_mac: data.targetType === 'mac' ? data.targetMac : null,
+        target_ip: data.targetType === 'ip' ? data.targetIp : (accountData?.modems[0]?.managementIp ?? null),
+        duration_minutes: data.durationMinutes,
+        cadence_seconds: data.cadenceSeconds,
+        reason: data.reason,
+        notification_email: data.notificationEmail,
+        alert_on_offline: data.alertOnOffline,
+        alert_on_recovery: data.alertOnRecovery,
+        requester_id: user.id,
+        requester_name: user.name,
+        source: 'web_app',
+      });
+
+      // Create audit log entry
+      await createAuditLogEntry({
+        action: 'job.create',
+        entityType: 'job',
+        entityId: job.id,
+        actorId: user.id,
+        actorName: user.name,
+        details: {
+          account_number: data.accountNumber,
+          duration_minutes: data.durationMinutes,
+          cadence_seconds: data.cadenceSeconds,
+          reason: data.reason,
+        },
+      });
+
+      // Start the mock ping simulator
+      startSimulator(job.id, data.cadenceSeconds, data.durationMinutes);
+
+      toast({
+        title: 'Job Created',
+        description: 'Monitoring job has been started successfully.',
+      });
+
+      navigate(`/jobs/${job.id}`);
+    } catch (error) {
+      console.error('Failed to create job:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to create monitoring job. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -301,9 +368,9 @@ export default function CreateJob() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent className="bg-popover">
-                          {DURATION_PRESETS.map((preset) => (
-                            <SelectItem key={preset.value} value={preset.value.toString()}>
-                              {preset.label}
+                          {durationPresets.presets.map((minutes) => (
+                            <SelectItem key={minutes} value={minutes.toString()}>
+                              {formatDurationFromMinutes(minutes)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -329,9 +396,9 @@ export default function CreateJob() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent className="bg-popover">
-                          {CADENCE_PRESETS.map((preset) => (
-                            <SelectItem key={preset.value} value={preset.value.toString()}>
-                              {preset.label}
+                          {cadencePresets.presets.map((seconds) => (
+                            <SelectItem key={seconds} value={seconds.toString()}>
+                              {formatCadence(seconds)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -448,7 +515,8 @@ export default function CreateJob() {
             <Button type="button" variant="outline" onClick={() => navigate('/')}>
               Cancel
             </Button>
-            <Button type="submit">
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Start Monitoring
             </Button>
           </div>

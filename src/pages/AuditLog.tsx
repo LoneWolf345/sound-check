@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useUser } from '@/contexts/UserContext';
 import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
-import { Search, Filter, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, FileText } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -22,65 +22,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatDateTime } from '@/lib/format';
-import type { AuditLog } from '@/types';
-
-// Mock audit logs
-const MOCK_AUDIT_LOGS: AuditLog[] = [
-  {
-    id: 'audit-1',
-    actor_id: 'user-1',
-    actor_name: 'John Smith',
-    action: 'job.create',
-    entity_type: 'job',
-    entity_id: 'job-1',
-    details: { account_number: '123456789', duration_minutes: 60 },
-    created_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'audit-2',
-    actor_id: 'admin-1',
-    actor_name: 'Admin User',
-    action: 'admin.config.change',
-    entity_type: 'admin_config',
-    entity_id: null,
-    details: { key: 'thresholds', before: { packet_loss_percent: 2 }, after: { packet_loss_percent: 3 } },
-    created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'audit-3',
-    actor_id: 'user-2',
-    actor_name: 'Jane Doe',
-    action: 'job.cancel',
-    entity_type: 'job',
-    entity_id: 'job-3',
-    details: { reason: 'User requested' },
-    created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'audit-4',
-    actor_id: null,
-    actor_name: 'System',
-    action: 'alert.triggered',
-    entity_type: 'alert',
-    entity_id: 'alert-1',
-    details: { job_id: 'job-1', alert_type: 'offline' },
-    created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'audit-5',
-    actor_id: null,
-    actor_name: 'System',
-    action: 'job.complete',
-    entity_type: 'job',
-    entity_id: 'job-2',
-    details: { overall_pass: true },
-    created_at: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
-  },
-];
+import { useAuditLogs } from '@/hooks/use-audit-log';
 
 function getActionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (action.includes('create') || action.includes('complete')) return 'default';
-  if (action.includes('cancel') || action.includes('alert')) return 'destructive';
+  if (action.includes('create')) return 'default';
+  if (action.includes('cancel') || action.includes('delete')) return 'destructive';
   if (action.includes('config')) return 'secondary';
   return 'outline';
 }
@@ -88,8 +34,14 @@ function getActionBadgeVariant(action: string): 'default' | 'secondary' | 'destr
 export default function AuditLog() {
   const { isAdmin } = useUser();
   const navigate = useNavigate();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
   const [actionFilter, setActionFilter] = useState<string>('all');
+
+  const { data, isLoading, error } = useAuditLogs({
+    page,
+    pageSize: 20,
+    action: actionFilter !== 'all' ? actionFilter : undefined,
+  });
 
   // Redirect non-admins
   useEffect(() => {
@@ -102,26 +54,12 @@ export default function AuditLog() {
     return null;
   }
 
-  const filteredLogs = MOCK_AUDIT_LOGS.filter((log) => {
-    const matchesSearch =
-      searchQuery === '' ||
-      log.actor_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.entity_id?.includes(searchQuery);
-
-    const matchesAction =
-      actionFilter === 'all' ||
-      log.action.startsWith(actionFilter);
-
-    return matchesSearch && matchesAction;
-  });
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Audit Log</h1>
         <p className="text-muted-foreground">
-          View all system actions and changes.
+          Track all system actions and changes.
         </p>
       </div>
 
@@ -129,28 +67,23 @@ export default function AuditLog() {
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by actor, action, or entity ID..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
             <Select
               value={actionFilter}
-              onValueChange={setActionFilter}
+              onValueChange={(v) => {
+                setActionFilter(v);
+                setPage(1);
+              }}
             >
-              <SelectTrigger className="w-full sm:w-[180px]">
-                <Filter className="h-4 w-4 mr-2" />
+              <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue placeholder="Filter by action" />
               </SelectTrigger>
               <SelectContent className="bg-popover">
                 <SelectItem value="all">All Actions</SelectItem>
-                <SelectItem value="job">Job Actions</SelectItem>
-                <SelectItem value="alert">Alerts</SelectItem>
-                <SelectItem value="admin">Admin Changes</SelectItem>
+                <SelectItem value="job.create">Job Created</SelectItem>
+                <SelectItem value="job.cancel">Job Cancelled</SelectItem>
+                <SelectItem value="job.complete">Job Completed</SelectItem>
+                <SelectItem value="alert.triggered">Alert Triggered</SelectItem>
+                <SelectItem value="admin.config.change">Config Changed</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -162,51 +95,94 @@ export default function AuditLog() {
         <CardHeader>
           <CardTitle>Activity Log</CardTitle>
           <CardDescription>
-            {filteredLogs.length} event{filteredLogs.length !== 1 ? 's' : ''} found
+            {isLoading
+              ? 'Loading...'
+              : `Showing ${data?.logs.length ?? 0} of ${data?.totalCount ?? 0} entries`}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {filteredLogs.length === 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <div className="text-center py-8 text-destructive">
+              <p>Failed to load audit logs. Please try again.</p>
+            </div>
+          ) : !data?.logs || data.logs.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No audit logs found matching your criteria.</p>
+              <p>No audit log entries found.</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Timestamp</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Entity</TableHead>
-                  <TableHead>Details</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredLogs.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
-                      {formatDateTime(log.created_at)}
-                    </TableCell>
-                    <TableCell>
-                      {log.actor_name || 'System'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={getActionBadgeVariant(log.action)}>
-                        {log.action}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {log.entity_type}
-                      {log.entity_id && ` / ${log.entity_id.substring(0, 8)}...`}
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate text-sm text-muted-foreground">
-                      {log.details ? JSON.stringify(log.details) : '—'}
-                    </TableCell>
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Timestamp</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Actor</TableHead>
+                    <TableHead>Entity</TableHead>
+                    <TableHead>Details</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {data.logs.map((log) => (
+                    <TableRow key={log.id}>
+                      <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
+                        {formatDateTime(log.created_at)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={getActionBadgeVariant(log.action)}>
+                          {log.action}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{log.actor_name ?? 'System'}</TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {log.entity_type}
+                        {log.entity_id && (
+                          <span className="text-muted-foreground">
+                            :{log.entity_id.slice(0, 8)}...
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-xs truncate text-sm text-muted-foreground">
+                        {log.details ? JSON.stringify(log.details).slice(0, 50) + '...' : '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {/* Pagination */}
+              {data.totalPages > 1 && (
+                <div className="flex items-center justify-between mt-4">
+                  <div className="text-sm text-muted-foreground">
+                    Page {data.page} of {data.totalPages}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
+                      disabled={page >= data.totalPages}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

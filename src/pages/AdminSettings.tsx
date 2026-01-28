@@ -1,16 +1,59 @@
 import { useUser } from '@/contexts/UserContext';
 import { useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
-import { Settings, Clock, Activity, Gauge, Users, Save } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Settings, Clock, Activity, Gauge, Users, Save, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { useToast } from '@/hooks/use-toast';
+import { useAdminConfig, useUpdateAdminConfig } from '@/hooks/use-admin-config';
+import { createAuditLogEntry } from '@/hooks/use-audit-log';
+import type { DurationPresetsConfig, CadencePresetsConfig, ThresholdsConfig, UsageLimitsConfig, WebhookConfig } from '@/types';
 
 export default function AdminSettings() {
-  const { isAdmin } = useUser();
+  const { isAdmin, user } = useUser();
   const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const { data: config, isLoading } = useAdminConfig();
+  const updateConfigMutation = useUpdateAdminConfig();
+
+  // Local form state
+  const [durationPresets, setDurationPresets] = useState<DurationPresetsConfig>({
+    presets: [60, 180, 360, 720, 1440, 2880],
+    default: 60,
+  });
+  const [cadencePresets, setCadencePresets] = useState<CadencePresetsConfig>({
+    presets: [10, 60, 300],
+    default: 60,
+  });
+  const [thresholds, setThresholds] = useState<ThresholdsConfig>({
+    packet_loss_percent: 2,
+    p95_latency_ms: 100,
+    system_error_percent: 5,
+  });
+  const [usageLimits, setUsageLimits] = useState<UsageLimitsConfig>({
+    jobs_per_user_per_day: 50,
+    max_running_jobs: 100,
+  });
+  const [webhook, setWebhook] = useState<WebhookConfig>({
+    endpoint: null,
+    secret: null,
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Update local state when config loads
+  useEffect(() => {
+    if (config) {
+      setDurationPresets(config.durationPresets);
+      setCadencePresets(config.cadencePresets);
+      setThresholds(config.thresholds);
+      setUsageLimits(config.usageLimits);
+      setWebhook(config.webhook);
+    }
+  }, [config]);
 
   // Redirect non-admins
   useEffect(() => {
@@ -21,6 +64,76 @@ export default function AdminSettings() {
 
   if (!isAdmin) {
     return null;
+  }
+
+  async function handleSave() {
+    if (!user) return;
+
+    setIsSaving(true);
+    try {
+      // Save all config values
+      await Promise.all([
+        updateConfigMutation.mutateAsync({
+          key: 'duration_presets',
+          value: durationPresets,
+          updatedBy: user.id,
+        }),
+        updateConfigMutation.mutateAsync({
+          key: 'cadence_presets',
+          value: cadencePresets,
+          updatedBy: user.id,
+        }),
+        updateConfigMutation.mutateAsync({
+          key: 'thresholds',
+          value: thresholds,
+          updatedBy: user.id,
+        }),
+        updateConfigMutation.mutateAsync({
+          key: 'usage_limits',
+          value: usageLimits,
+          updatedBy: user.id,
+        }),
+        updateConfigMutation.mutateAsync({
+          key: 'webhook',
+          value: webhook,
+          updatedBy: user.id,
+        }),
+      ]);
+
+      // Create audit log entry
+      await createAuditLogEntry({
+        action: 'admin.config.change',
+        entityType: 'admin_config',
+        actorId: user.id,
+        actorName: user.name,
+        details: {
+          before: config,
+          after: { durationPresets, cadencePresets, thresholds, usageLimits, webhook },
+        },
+      });
+
+      toast({
+        title: 'Settings Saved',
+        description: 'Admin configuration has been updated.',
+      });
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to save settings. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   return (
@@ -45,11 +158,16 @@ export default function AdminSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
-            {[60, 180, 360, 720, 1440, 2880].map((minutes) => (
-              <div key={minutes} className="flex items-center gap-2">
+            {durationPresets.presets.map((minutes, index) => (
+              <div key={index} className="flex items-center gap-2">
                 <Input
                   type="number"
-                  defaultValue={minutes}
+                  value={minutes}
+                  onChange={(e) => {
+                    const newPresets = [...durationPresets.presets];
+                    newPresets[index] = parseInt(e.target.value) || 0;
+                    setDurationPresets({ ...durationPresets, presets: newPresets });
+                  }}
                   className="w-24"
                 />
                 <span className="text-sm text-muted-foreground">minutes</span>
@@ -58,7 +176,12 @@ export default function AdminSettings() {
           </div>
           <div className="flex items-center gap-2">
             <Label>Default:</Label>
-            <Input type="number" defaultValue={60} className="w-24" />
+            <Input
+              type="number"
+              value={durationPresets.default}
+              onChange={(e) => setDurationPresets({ ...durationPresets, default: parseInt(e.target.value) || 60 })}
+              className="w-24"
+            />
             <span className="text-sm text-muted-foreground">minutes</span>
           </div>
         </CardContent>
@@ -77,11 +200,16 @@ export default function AdminSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
-            {[10, 60, 300].map((seconds) => (
-              <div key={seconds} className="flex items-center gap-2">
+            {cadencePresets.presets.map((seconds, index) => (
+              <div key={index} className="flex items-center gap-2">
                 <Input
                   type="number"
-                  defaultValue={seconds}
+                  value={seconds}
+                  onChange={(e) => {
+                    const newPresets = [...cadencePresets.presets];
+                    newPresets[index] = parseInt(e.target.value) || 0;
+                    setCadencePresets({ ...cadencePresets, presets: newPresets });
+                  }}
                   className="w-24"
                 />
                 <span className="text-sm text-muted-foreground">seconds</span>
@@ -90,7 +218,12 @@ export default function AdminSettings() {
           </div>
           <div className="flex items-center gap-2">
             <Label>Default:</Label>
-            <Input type="number" defaultValue={60} className="w-24" />
+            <Input
+              type="number"
+              value={cadencePresets.default}
+              onChange={(e) => setCadencePresets({ ...cadencePresets, default: parseInt(e.target.value) || 60 })}
+              className="w-24"
+            />
             <span className="text-sm text-muted-foreground">seconds</span>
           </div>
         </CardContent>
@@ -112,14 +245,25 @@ export default function AdminSettings() {
             <div className="space-y-2">
               <Label>Packet Loss Threshold (%)</Label>
               <div className="flex items-center gap-2">
-                <Input type="number" defaultValue={2} step={0.1} className="w-24" />
+                <Input
+                  type="number"
+                  value={thresholds.packet_loss_percent}
+                  onChange={(e) => setThresholds({ ...thresholds, packet_loss_percent: parseFloat(e.target.value) || 0 })}
+                  step={0.1}
+                  className="w-24"
+                />
                 <span className="text-sm text-muted-foreground">% (PASS if ≤)</span>
               </div>
             </div>
             <div className="space-y-2">
               <Label>p95 Latency Threshold (ms)</Label>
               <div className="flex items-center gap-2">
-                <Input type="number" defaultValue={100} className="w-24" />
+                <Input
+                  type="number"
+                  value={thresholds.p95_latency_ms}
+                  onChange={(e) => setThresholds({ ...thresholds, p95_latency_ms: parseInt(e.target.value) || 0 })}
+                  className="w-24"
+                />
                 <span className="text-sm text-muted-foreground">ms (PASS if ≤)</span>
               </div>
             </div>
@@ -128,7 +272,13 @@ export default function AdminSettings() {
           <div className="space-y-2">
             <Label>System Error Note Threshold (%)</Label>
             <div className="flex items-center gap-2">
-              <Input type="number" defaultValue={5} step={0.1} className="w-24" />
+              <Input
+                type="number"
+                value={thresholds.system_error_percent}
+                onChange={(e) => setThresholds({ ...thresholds, system_error_percent: parseFloat(e.target.value) || 0 })}
+                step={0.1}
+                className="w-24"
+              />
               <span className="text-sm text-muted-foreground">
                 % (show note in email if system errors exceed this)
               </span>
@@ -152,11 +302,21 @@ export default function AdminSettings() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Jobs Per User Per Day</Label>
-              <Input type="number" defaultValue={50} className="w-32" />
+              <Input
+                type="number"
+                value={usageLimits.jobs_per_user_per_day}
+                onChange={(e) => setUsageLimits({ ...usageLimits, jobs_per_user_per_day: parseInt(e.target.value) || 0 })}
+                className="w-32"
+              />
             </div>
             <div className="space-y-2">
               <Label>Maximum Running Jobs (Global)</Label>
-              <Input type="number" defaultValue={100} className="w-32" />
+              <Input
+                type="number"
+                value={usageLimits.max_running_jobs}
+                onChange={(e) => setUsageLimits({ ...usageLimits, max_running_jobs: parseInt(e.target.value) || 0 })}
+                className="w-32"
+              />
             </div>
           </div>
         </CardContent>
@@ -176,19 +336,33 @@ export default function AdminSettings() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>Webhook Endpoint URL</Label>
-            <Input type="url" placeholder="https://tempo.company.com/webhooks/modem-monitor" />
+            <Input
+              type="url"
+              placeholder="https://tempo.company.com/webhooks/modem-monitor"
+              value={webhook.endpoint ?? ''}
+              onChange={(e) => setWebhook({ ...webhook, endpoint: e.target.value || null })}
+            />
           </div>
           <div className="space-y-2">
             <Label>Webhook Secret (HMAC)</Label>
-            <Input type="password" placeholder="Enter secret for webhook signing" />
+            <Input
+              type="password"
+              placeholder="Enter secret for webhook signing"
+              value={webhook.secret ?? ''}
+              onChange={(e) => setWebhook({ ...webhook, secret: e.target.value || null })}
+            />
           </div>
         </CardContent>
       </Card>
 
       {/* Save Button */}
       <div className="flex justify-end">
-        <Button className="gap-2">
-          <Save className="h-4 w-4" />
+        <Button className="gap-2" onClick={handleSave} disabled={isSaving}>
+          {isSaving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
           Save Changes
         </Button>
       </div>
