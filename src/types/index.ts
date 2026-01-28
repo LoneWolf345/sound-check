@@ -5,6 +5,7 @@ export type SampleStatus = 'success' | 'missed' | 'system_error';
 export type JobReason = 'reactive' | 'proactive';
 export type AlertState = 'ok' | 'offline_alerted';
 export type AppRole = 'admin' | 'user';
+export type MonitoringMode = 'simulated' | 'real_polling';
 
 export interface Job {
   id: string;
@@ -22,9 +23,11 @@ export interface Job {
   requester_id: string;
   requester_name: string;
   source: string;
+  monitoring_mode: MonitoringMode;
   started_at: string;
   completed_at: string | null;
   cancelled_at: string | null;
+  last_ping_at: string | null;
   created_at: string;
 }
 

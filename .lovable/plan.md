@@ -1,6 +1,6 @@
-
-
 # Implement Real Polling via OpenShift Pod
+
+**Status: ✅ IMPLEMENTED**
 
 ## Overview
 Since the Supabase edge function cannot reach the internal SpreeDB polling API, the actual polling will be performed by a backend service running in an OpenShift pod. The pod will have network access to the internal polling infrastructure.
