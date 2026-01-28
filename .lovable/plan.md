@@ -1,182 +1,193 @@
-# Phase 3: Results & Visualization - COMPLETED ✓
 
-## Status: Implemented on 2026-01-28
-
-### Completed:
-- ✅ AvailabilityTimeline component with color-coded segments and tooltips
-- ✅ Enhanced RTT Chart with missed ping markers and outage region shading
-- ✅ CompletionEmailPreview component with full metrics display
-- ✅ JobEventLog component showing lifecycle events
-- ✅ JobMetricsGrid extracted for reusability
-- ✅ Email preview dialog with copy-to-clipboard functionality
-
----
-
-# Phase 3: Results & Visualization - Implementation Plan
+# Phase 4: Email Sending - Implementation Plan
 
 ## Overview
-Phase 3 focuses on enhancing the visual presentation of job results with an availability timeline strip, improving the existing RTT chart, and creating a completion email preview component. This phase makes results clearer and more actionable for frontline associates.
+Phase 4 implements the actual email sending functionality using a backend function and email service (Resend). When a job completes, the system will send a completion email to the requester with the job results summary, metric pass/fail status, and a link to the full job details.
 
 ---
 
-## Part 1: Availability Timeline Strip
+## Part 1: Set Up Email Service Integration
 
-### 1.1 Create AvailabilityTimeline Component
-Create a new component `src/components/charts/AvailabilityTimeline.tsx`:
+### 1.1 Configure Resend API
+The email sending will use Resend, which requires:
 
-- A horizontal strip showing each sample as a colored segment
-- Color coding:
-  - Green: success
-  - Red: missed
-  - Yellow/Orange: system_error
-- Hover tooltip showing timestamp and status
-- Supports scrolling for long job durations
-- Shows time markers at regular intervals
+- User to create a Resend account at https://resend.com
+- User to verify their email domain at https://resend.com/domains
+- User to create an API key at https://resend.com/api-keys
+- Add `RESEND_API_KEY` secret to the project
 
-### 1.2 Integrate into JobDetail.tsx
-- Add the availability timeline below the RTT chart
-- Show as a compact strip visualization
-- Useful for quickly identifying outage patterns
+### 1.2 Create Email Sending Edge Function
+Create `supabase/functions/send-completion-email/index.ts`:
 
----
-
-## Part 2: Enhanced RTT Chart
-
-### 2.1 Mark Missed Pings on Chart
-Update the RTT LineChart in JobDetail.tsx:
-
-- Add scatter points for missed pings (red markers on X-axis)
-- Show vertical bands for outage periods (5+ consecutive misses)
-- Add legend showing success/missed/system_error colors
-- Improve tooltip to show sample status
-
-### 2.2 Chart Improvements
-- Add zoom/pan capability for long duration jobs
-- Show p95 threshold reference line (100ms - already implemented)
-- Show time-based X-axis instead of sample index for longer jobs
+- Accept job ID as input
+- Fetch job and samples from database using service role key
+- Calculate summary metrics
+- Generate HTML email content matching the CompletionEmailPreview design
+- Send via Resend API
+- Return success/failure status
 
 ---
 
-## Part 3: Completion Email Preview
+## Part 2: Email HTML Template
 
-### 3.1 Create EmailPreview Component
-Create `src/components/email/CompletionEmailPreview.tsx`:
+### 2.1 Create Email HTML Generator
+The edge function will include an HTML template generator that produces:
 
-- Renders email content that would be sent on job completion
-- Uses the job and summary data to generate preview
-- Matches the email specification from requirements
+- **Header**: Job completed notification with account number and target
+- **Result Badge**: Prominent PASS/FAIL indicator with color styling
+- **Metric Table**: Packet loss and p95 latency with thresholds and pass/fail
+- **Statistics Summary**: Total samples, success rate, outage events, miss streaks
+- **System Error Warning**: Conditional section if errors exceed 5%
+- **Footer**: Link to job detail page and generation timestamp
 
-### 3.2 Email Content Structure
-Based on the requirements, the email must include:
-
-1. **Header Section**
-   - Job completed notification
-   - Account number and target identifier
-   - Duration, cadence, and reason
-
-2. **Results Summary**
-   - Overall PASS/FAIL badge (prominent)
-   - Pass/fail table for each metric:
-     - Packet Loss: X% (PASS/FAIL)
-     - p95 Latency: X ms (PASS/FAIL)
-
-3. **Visual Charts (Static Representations)**
-   - RTT time-series summary (min/avg/max/p95)
-   - Availability summary (% success, outage count)
-   - Note: In mock implementation, show chart descriptions or static representations
-
-4. **Statistics Table**
-   - Total samples collected
-   - Success count and rate
-   - Missed count
-   - Outage events
-   - Longest miss streak
-   - System error count
-
-5. **System Error Note**
-   - Only shown if system errors exceed 5% of total samples
-   - Warning about potential data reliability issues
-
-6. **Footer**
-   - Link to full job detail page
-   - Timestamp of email generation
-
-### 3.3 Add Email Preview to JobDetail
-- Show "Email Preview" button for completed jobs
-- Opens a dialog/modal with the rendered email content
-- Include "Copy to Clipboard" functionality (for testing)
+### 2.2 Email Styling
+- Inline CSS for email client compatibility
+- Responsive design for mobile email clients
+- Color-coded pass (green) / fail (red) badges
+- Clean, professional layout matching the preview component
 
 ---
 
-## Part 4: Job Detail Page Enhancements
+## Part 3: Trigger Email on Job Completion
 
-### 4.1 Event Log Section
-Add an event log showing job lifecycle:
+### 3.1 Update Ping Simulator
+Modify `src/lib/ping-simulator.ts`:
 
-- Job created
-- Job started
-- Alerts triggered (with timestamps)
-- Job cancelled/completed
+- After updating job status to 'completed', call the edge function
+- Pass the job ID and job detail URL
+- Handle success/failure response
+- Log any email delivery errors
 
-### 4.2 Improved Layout
-- Better organization of metrics, charts, and configuration
-- Collapsible sections for detailed information
-- Print-friendly view option
+### 3.2 Alternative: Database Trigger (Future)
+For production, a Postgres trigger or cron job would be more reliable than client-side triggering. This phase uses client-side for simplicity; Phase 5 could implement server-side triggers.
+
+---
+
+## Part 4: Track Email Delivery
+
+### 4.1 Create Email Log Table (Optional Enhancement)
+Could add an `email_logs` table to track:
+- Job ID
+- Recipient email
+- Sent timestamp
+- Delivery status
+- Error message (if any)
+
+For Phase 4, we'll use the existing `alerts` table delivery_status pattern or simply log to console.
 
 ---
 
 ## Technical Details
 
-### New Files to Create
-- `src/components/charts/AvailabilityTimeline.tsx` - Timeline strip component
-- `src/components/email/CompletionEmailPreview.tsx` - Email preview component
+### Edge Function: send-completion-email
+
+```text
+supabase/functions/send-completion-email/index.ts
+
+Request Body:
+{
+  "jobId": "uuid",
+  "jobDetailUrl": "https://..."
+}
+
+Response:
+{
+  "success": true,
+  "messageId": "resend-message-id"
+}
+```
+
+### Email Content Structure
+
+```text
++------------------------------------------+
+|  MONITORING JOB COMPLETED                |
+|  Account: 12345678 | 00:11:22:33:44:55   |
++------------------------------------------+
+|                                          |
+|           [PASS] or [FAIL]               |
+|                                          |
++------------------------------------------+
+|  JOB CONFIGURATION                       |
+|  Duration: 1 hour | Cadence: 10 sec      |
+|  Reason: Reactive | Started: Jan 28...   |
++------------------------------------------+
+|  METRIC RESULTS                          |
+|  Metric      | Value  | Threshold | Pass |
+|  Packet Loss | 1.2%   | <= 2%     | PASS |
+|  p95 Latency | 45ms   | <= 100ms  | PASS |
++------------------------------------------+
+|  COLLECTION STATISTICS                   |
+|  Total Samples: 360                      |
+|  Successful: 354 (98.3%)                 |
+|  Missed: 5                               |
+|  Outage Events: 0                        |
+|  Longest Miss Streak: 2                  |
+|  System Errors: 1 (0.3%)                 |
++------------------------------------------+
+|  [View Full Job Details]                 |
+|  Generated: Jan 28, 2026 2:30 PM         |
++------------------------------------------+
+```
+
+### Files to Create
+
+- `supabase/functions/send-completion-email/index.ts` - Main edge function
+- `supabase/functions/send-completion-email/email-template.ts` - HTML generator (or inline)
 
 ### Files to Update
-- `src/pages/JobDetail.tsx` - Add timeline, enhance chart, add email preview, add event log
 
-### Component Architecture
+- `supabase/config.toml` - Add function configuration with `verify_jwt = false`
+- `src/lib/ping-simulator.ts` - Add email trigger after job completion
+- `.lovable/plan.md` - Update with Phase 4 completion status
 
-```
-JobDetail.tsx
-├── Header (job info, status, actions)
-├── Progress bar (running jobs only)
-├── Metric tiles (packet loss, p95, avg RTT, success rate, etc.)
-├── RTT Chart (enhanced with missed ping markers)
-├── AvailabilityTimeline (new - color-coded strip)
-├── Event Log (new - lifecycle events)
-├── Job Configuration (existing)
-└── Email Preview Dialog (new - for completed jobs)
-```
+### Calculation Logic in Edge Function
 
-### AvailabilityTimeline Component Props
+The edge function will replicate the `calculateJobSummary` logic:
 
 ```typescript
-interface AvailabilityTimelineProps {
-  samples: Sample[];
-  startTime: Date;
-  endTime?: Date;
-  height?: number;
+function calculateJobSummary(samples) {
+  // Count by status
+  // Calculate packet loss (missed / (success + missed))
+  // Calculate RTT stats (avg, max, p95)
+  // Count outage events (5+ consecutive misses)
+  // Evaluate pass/fail against thresholds
 }
 ```
 
-### CompletionEmailPreview Component Props
+### Security Considerations
 
-```typescript
-interface CompletionEmailPreviewProps {
-  job: Job;
-  summary: JobSummary;
-  samples: Sample[];
-}
-```
+- Edge function uses `verify_jwt = false` since it's called from client after job completion
+- Uses `SUPABASE_SERVICE_ROLE_KEY` to read job/sample data
+- Validates job exists before sending email
+- Sanitizes email addresses before sending
+
+### Required Secrets
+
+- `RESEND_API_KEY` - Must be added by user via the secrets tool
+
+---
+
+## Implementation Steps
+
+1. **Request RESEND_API_KEY** from user
+2. **Create edge function** `send-completion-email/index.ts`
+3. **Build HTML email template** with inline styles
+4. **Update supabase/config.toml** with function config
+5. **Modify ping-simulator.ts** to trigger email on completion
+6. **Test end-to-end** with a sample job
+7. **Update plan.md** with completion status
 
 ---
 
 ## Summary
-Phase 3 enhances the visualization and reporting capabilities:
-- Availability timeline strip for quick visual pattern recognition
-- Enhanced RTT chart with missed ping markers
-- Completion email preview for testing notification content
-- Event log for job lifecycle tracking
 
-This phase improves the user experience by making job results clearer and more actionable, while also preparing the foundation for the actual email sending in Phase 4.
+Phase 4 adds real email delivery for job completion notifications:
 
+- Backend function using Resend for reliable email delivery
+- HTML email matching the existing preview design
+- Automatic trigger when jobs complete
+- Full metrics and pass/fail status in email body
+- Direct link to job detail page for full results
+
+This completes the core monitoring workflow where users can create jobs, monitor progress, and receive results via email.
