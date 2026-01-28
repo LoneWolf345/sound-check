@@ -9,9 +9,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   ReferenceArea,
-  Scatter,
-  ScatterChart,
-  ComposedChart,
+  ReferenceDot,
 } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Sample } from '@/types';
@@ -34,7 +32,7 @@ interface OutageRegion {
 }
 
 export function RTTChart({ samples }: RTTChartProps) {
-  const { chartData, outageRegions } = useMemo(() => {
+  const { chartData, outageRegions, yDomain, missedIndices, errorIndices } = useMemo(() => {
     const data: ChartDataPoint[] = samples.map((sample, index) => ({
       time: new Date(sample.recorded_at).toLocaleTimeString(),
       rtt: sample.status === 'success' ? sample.rtt_ms : null,
@@ -42,6 +40,15 @@ export function RTTChart({ samples }: RTTChartProps) {
       index,
       recordedAt: sample.recorded_at,
     }));
+
+    // Calculate Y-axis domain from actual RTT values
+    const rttValues = data.map(d => d.rtt).filter((v): v is number => v !== null);
+    const maxRtt = rttValues.length > 0 ? Math.max(...rttValues) : 100;
+    const calculatedYDomain: [number, number] = [0, Math.max(maxRtt * 1.1, 10)];
+
+    // Get indices for missed and error samples
+    const missed = data.filter(d => d.status === 'missed').map(d => d.index);
+    const errors = data.filter(d => d.status === 'system_error').map(d => d.index);
 
     // Calculate outage regions (5+ consecutive misses)
     const regions: OutageRegion[] = [];
@@ -68,23 +75,21 @@ export function RTTChart({ samples }: RTTChartProps) {
       regions.push({ start: streakStart, end: samples.length - 1 });
     }
 
-    return { chartData: data, outageRegions: regions };
+    return { 
+      chartData: data, 
+      outageRegions: regions, 
+      yDomain: calculatedYDomain,
+      missedIndices: missed,
+      errorIndices: errors,
+    };
   }, [samples]);
-
-  // Get missed samples for scatter plot
-  const missedPoints = chartData.filter(d => d.status === 'missed').map(d => ({
-    ...d,
-    y: 0,
-  }));
-
-  const systemErrorPoints = chartData.filter(d => d.status === 'system_error').map(d => ({
-    ...d,
-    y: 0,
-  }));
 
   if (chartData.length === 0) {
     return null;
   }
+
+  // Calculate appropriate tick interval for X-axis
+  const xAxisInterval = chartData.length <= 20 ? 0 : Math.floor(chartData.length / 10);
 
   return (
     <Card>
@@ -98,15 +103,17 @@ export function RTTChart({ samples }: RTTChartProps) {
       <CardContent>
         <div className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData}>
+            <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis
                 dataKey="index"
                 tickFormatter={(i) => `#${i + 1}`}
+                interval={xAxisInterval}
+                tick={{ fontSize: 10 }}
                 className="text-xs"
               />
               <YAxis
-                domain={[0, 'auto']}
+                domain={yDomain}
                 tickFormatter={(v) => `${v}ms`}
                 className="text-xs"
               />
@@ -153,53 +160,41 @@ export function RTTChart({ samples }: RTTChartProps) {
                 label={{ value: 'p95 threshold', position: 'right', fontSize: 10 }}
               />
 
-              {/* RTT line */}
+              {/* RTT line with dots */}
               <Line
                 type="monotone"
                 dataKey="rtt"
                 stroke="hsl(var(--primary))"
                 strokeWidth={2}
-                dot={false}
+                dot={{ r: 3, fill: 'hsl(var(--primary))' }}
+                activeDot={{ r: 5 }}
                 connectNulls={false}
               />
 
-              {/* Missed ping markers on x-axis */}
-              <Scatter
-                data={missedPoints}
-                dataKey="y"
-                fill="hsl(var(--destructive))"
-                shape={(props: any) => {
-                  const { cx } = props;
-                  return (
-                    <circle
-                      cx={cx}
-                      cy={props.yAxis.y + props.yAxis.height}
-                      r={4}
-                      fill="hsl(var(--destructive))"
-                    />
-                  );
-                }}
-              />
+              {/* Missed ping markers at y=0 using ReferenceDot */}
+              {missedIndices.map((idx) => (
+                <ReferenceDot
+                  key={`missed-${idx}`}
+                  x={idx}
+                  y={0}
+                  r={4}
+                  fill="hsl(var(--destructive))"
+                  stroke="none"
+                />
+              ))}
 
-              {/* System error markers */}
-              <Scatter
-                data={systemErrorPoints}
-                dataKey="y"
-                fill="hsl(38, 92%, 50%)"
-                shape={(props: any) => {
-                  const { cx } = props;
-                  return (
-                    <rect
-                      x={cx - 3}
-                      y={props.yAxis.y + props.yAxis.height - 3}
-                      width={6}
-                      height={6}
-                      fill="hsl(38, 92%, 50%)"
-                    />
-                  );
-                }}
-              />
-            </ComposedChart>
+              {/* System error markers at y=0 using ReferenceDot */}
+              {errorIndices.map((idx) => (
+                <ReferenceDot
+                  key={`error-${idx}`}
+                  x={idx}
+                  y={0}
+                  r={4}
+                  fill="hsl(38, 92%, 50%)"
+                  stroke="none"
+                />
+              ))}
+            </LineChart>
           </ResponsiveContainer>
         </div>
 
