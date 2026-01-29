@@ -41,6 +41,27 @@ export interface PollResult {
   error?: string;
 }
 
+// Device info types for CM Info API
+export interface DeviceInfo {
+  ipAddress: string;
+  macAddress: string;
+  make: string;
+  model: string;
+  serialNumber?: string;
+  docsisVersion?: string;
+  firmwareVersion?: string;
+  uptime?: string;
+}
+
+export interface DeviceValidationResult {
+  success: boolean;
+  device?: DeviceInfo;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 // Re-export billing types for convenience
 export type {
   AccountValidationResult,

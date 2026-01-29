@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Loader2, CheckCircle2, AlertCircle, Search, Radio, Wifi, Tv, Phone, Monitor, AlertTriangle } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, Search, Radio, Wifi, Tv, Phone, AlertTriangle, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,8 +28,9 @@ import {
 } from '@/components/ui/form';
 import { useToast } from '@/hooks/use-toast';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { isValidMacAddress, isValidIpAddress, formatDurationFromMinutes, formatCadence, convertToMinutes } from '@/lib/format';
-import { validateAccount, isRealApiConfigured, type ValidatedAccount } from '@/lib/account-validation';
+import { isValidIpAddress, formatDurationFromMinutes, formatCadence, convertToMinutes } from '@/lib/format';
+import { validateAccount, type ValidatedAccount } from '@/lib/account-validation';
+import { validateDevice, type DeviceInfo } from '@/lib/device-validation';
 import { useCreateJob, checkUsageLimits, checkDuplicateRunningJob } from '@/hooks/use-jobs';
 import { useAdminConfig } from '@/hooks/use-admin-config';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
@@ -37,9 +38,8 @@ import { startSimulator } from '@/lib/ping-simulator';
 
 const jobFormSchema = z.object({
   accountNumber: z.string().min(9, 'Account number must be at least 9 digits').max(12),
-  targetType: z.enum(['mac', 'ip']),
-  targetMac: z.string().optional(),
-  targetIp: z.string().optional(),
+  targetIp: z.string().refine(isValidIpAddress, 'Invalid IP address format'),
+  targetMac: z.string().optional(), // Auto-populated from device lookup
   durationMinutes: z.number().min(1),
   cadenceSeconds: z.number().min(10),
   reason: z.enum(['reactive', 'proactive']),
@@ -47,15 +47,6 @@ const jobFormSchema = z.object({
   alertOnOffline: z.boolean(),
   alertOnRecovery: z.boolean(),
   monitoringMode: z.enum(['simulated', 'real_polling']),
-}).refine((data) => {
-  if (data.targetType === 'mac') {
-    return data.targetMac && isValidMacAddress(data.targetMac);
-  } else {
-    return data.targetIp && isValidIpAddress(data.targetIp);
-  }
-}, {
-  message: 'Please enter a valid MAC address or IP address',
-  path: ['targetMac'],
 });
 
 type JobFormValues = z.infer<typeof jobFormSchema>;
@@ -64,10 +55,19 @@ export default function CreateJob() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { internalUser: user } = useAuthContext();
+  
+  // Account validation state
   const [isValidating, setIsValidating] = useState(false);
   const [accountData, setAccountData] = useState<ValidatedAccount | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [validationSource, setValidationSource] = useState<'api' | 'mock' | null>(null);
+  
+  // Device validation state
+  const [isValidatingDevice, setIsValidatingDevice] = useState(false);
+  const [deviceData, setDeviceData] = useState<DeviceInfo | null>(null);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [deviceValidationSource, setDeviceValidationSource] = useState<'api' | 'mock' | null>(null);
+  
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const createJobMutation = useCreateJob();
@@ -96,9 +96,8 @@ export default function CreateJob() {
     resolver: zodResolver(jobFormSchema),
     defaultValues: {
       accountNumber: '',
-      targetType: 'mac',
-      targetMac: '',
       targetIp: '',
+      targetMac: '',
       durationMinutes: durationPresetsConfig.default,
       cadenceSeconds: cadencePresets.default,
       reason: 'reactive',
@@ -108,8 +107,6 @@ export default function CreateJob() {
       monitoringMode: 'simulated',
     },
   });
-
-  const watchTargetType = form.watch('targetType');
 
   async function handleValidateAccount() {
     const accountNumber = form.getValues('accountNumber');
@@ -144,6 +141,41 @@ export default function CreateJob() {
     }
   }
 
+  async function handleValidateDevice() {
+    const ip = form.getValues('targetIp');
+    if (!ip || !isValidIpAddress(ip)) {
+      // Don't show error on blur if field is empty
+      if (ip) {
+        setDeviceError('Please enter a valid IP address');
+      }
+      return;
+    }
+
+    setIsValidatingDevice(true);
+    setDeviceError(null);
+    setDeviceData(null);
+    setDeviceValidationSource(null);
+
+    try {
+      const result = await validateDevice(ip);
+      setDeviceValidationSource(result.source);
+      
+      if (result.success && result.device) {
+        setDeviceData(result.device);
+        // Auto-populate MAC in form (used for job creation)
+        form.setValue('targetMac', result.device.macAddress);
+      } else {
+        setDeviceError(result.error?.message || 'Device not found');
+        form.setValue('targetMac', '');
+      }
+    } catch {
+      setDeviceError('Failed to fetch device information. Please try again.');
+      form.setValue('targetMac', '');
+    } finally {
+      setIsValidatingDevice(false);
+    }
+  }
+
   async function onSubmit(data: JobFormValues) {
     if (!user) {
       toast({
@@ -170,8 +202,8 @@ export default function CreateJob() {
       }
 
       // Check for duplicate running jobs
-      const targetMac = data.targetType === 'mac' ? data.targetMac ?? null : null;
-      const targetIp = data.targetType === 'ip' ? data.targetIp ?? null : null;
+      const targetMac = data.targetMac || null;
+      const targetIp = data.targetIp || null;
 
       const duplicateCheck = await checkDuplicateRunningJob(targetMac, targetIp);
       if (duplicateCheck.isDuplicate) {
@@ -190,8 +222,8 @@ export default function CreateJob() {
       // Create the job
       const job = await createJobMutation.mutateAsync({
         account_number: data.accountNumber,
-        target_mac: data.targetType === 'mac' ? data.targetMac : null,
-        target_ip: data.targetType === 'ip' ? data.targetIp : null,
+        target_mac: data.targetMac || null,
+        target_ip: data.targetIp || null,
         duration_minutes: data.durationMinutes,
         cadence_seconds: data.cadenceSeconds,
         reason: data.reason,
@@ -385,71 +417,97 @@ export default function CreateJob() {
             </CardContent>
           </Card>
 
-          {/* Target Selection */}
+          {/* Target Configuration */}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Target Configuration</CardTitle>
               <CardDescription>
-                Specify the modem identifier and monitoring parameters.
+                Enter the management IP address to identify the device and configure monitoring.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <FormField
                 control={form.control}
-                name="targetType"
+                name="targetIp"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Target Type</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormLabel>Management IP Address</FormLabel>
+                    <div className="flex gap-2">
                       <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select target type" />
-                        </SelectTrigger>
+                        <Input 
+                          placeholder="10.117.224.95" 
+                          {...field} 
+                          onBlur={(e) => {
+                            field.onBlur();
+                            if (e.target.value) {
+                              handleValidateDevice();
+                            }
+                          }}
+                        />
                       </FormControl>
-                      <SelectContent className="bg-popover">
-                        <SelectItem value="mac">MAC Address</SelectItem>
-                        <SelectItem value="ip">Management IP</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      {isValidatingDevice && (
+                        <div className="flex items-center px-3">
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        </div>
+                      )}
+                    </div>
+                    <FormDescription>
+                      Enter the modem's CM management IP address. Device info will be fetched automatically.
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
 
-              {watchTargetType === 'mac' ? (
-                <FormField
-                  control={form.control}
-                  name="targetMac"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>MAC Address</FormLabel>
-                      <FormControl>
-                        <Input placeholder="00:1A:2B:3C:4D:5E" {...field} />
-                      </FormControl>
-                      <FormDescription>
-                        Enter the modem's MAC address (formats: 00:1A:2B:3C:4D:5E or 001A2B3C4D5E)
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : (
-                <FormField
-                  control={form.control}
-                  name="targetIp"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Management IP</FormLabel>
-                      <FormControl>
-                        <Input placeholder="10.20.30.40" {...field} />
-                      </FormControl>
-                      <FormDescription>
-                        Enter the modem's CM management IP address
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              {deviceError && (
+                <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-md p-3">
+                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium">Device Not Found</p>
+                    <p className="text-xs mt-0.5">{deviceError}</p>
+                  </div>
+                </div>
+              )}
+
+              {deviceData && (
+                <div className="rounded-md bg-accent/50 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-medium text-primary">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Device Found
+                    </div>
+                    {deviceValidationSource === 'mock' && (
+                      <Badge variant="outline" className="text-xs">
+                        Mock Data
+                      </Badge>
+                    )}
+                  </div>
+                  
+                  <div className="text-sm space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">MAC Address:</span>
+                      <code className="bg-muted px-2 py-0.5 rounded font-mono text-xs">
+                        {deviceData.macAddress}
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Make:</span>
+                      <span className="font-medium">{deviceData.make}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Model:</span>
+                      <span className="font-medium">{deviceData.model}</span>
+                    </div>
+                    {deviceData.docsisVersion && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">DOCSIS:</span>
+                        <Badge variant="secondary" className="text-xs">
+                          {deviceData.docsisVersion}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
 
               <div className="grid gap-4 sm:grid-cols-2">

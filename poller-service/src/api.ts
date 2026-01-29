@@ -4,6 +4,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { validateAccount } from './billing.js';
+import { getDeviceInfo } from './device.js';
 
 const app = express();
 
@@ -81,6 +82,49 @@ app.get('/api/accounts/:accountNumber', async (req: Request, res: Response) => {
     }
   } catch (error) {
     console.error(`[API] Error validating account ${accountNumber}:`, error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'An unexpected error occurred',
+      },
+    });
+  }
+});
+
+/**
+ * Device info endpoint
+ * GET /api/devices/:ipAddress
+ */
+app.get('/api/devices/:ipAddress', async (req: Request, res: Response) => {
+  const { ipAddress } = req.params;
+  
+  // Validate IP address format
+  const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  if (!ipAddress || !ipRegex.test(ipAddress)) {
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'INVALID_IP',
+        message: 'Invalid IP address format',
+      },
+    });
+    return;
+  }
+  
+  try {
+    const result = await getDeviceInfo(ipAddress);
+    
+    // Return appropriate status code based on result
+    if (result.success) {
+      res.json(result);
+    } else if (result.error?.code === 'DEVICE_NOT_FOUND') {
+      res.status(404).json(result);
+    } else {
+      res.status(502).json(result);
+    }
+  } catch (error) {
+    console.error(`[API] Error fetching device info for ${ipAddress}:`, error);
     res.status(500).json({
       success: false,
       error: {
