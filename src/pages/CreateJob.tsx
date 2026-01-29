@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Loader2, CheckCircle2, AlertCircle, Search, Radio, Wifi, Tv, Phone, AlertTriangle, Monitor } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, Search, Wifi, Tv, Phone, AlertTriangle, FlaskConical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,6 +36,9 @@ import { useAdminConfig } from '@/hooks/use-admin-config';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { startSimulator } from '@/lib/ping-simulator';
 
+// Test account number triggers simulated mode
+const TEST_ACCOUNT_NUMBER = '123456789';
+
 const jobFormSchema = z.object({
   accountNumber: z.string().min(9, 'Account number must be at least 9 digits').max(12),
   targetIp: z.string().refine(isValidIpAddress, 'Invalid IP address format'),
@@ -46,7 +49,6 @@ const jobFormSchema = z.object({
   notificationEmail: z.string().email('Invalid email address'),
   alertOnOffline: z.boolean(),
   alertOnRecovery: z.boolean(),
-  monitoringMode: z.enum(['simulated', 'real_polling']),
 });
 
 type JobFormValues = z.infer<typeof jobFormSchema>;
@@ -104,7 +106,6 @@ export default function CreateJob() {
       notificationEmail: user?.email ?? '',
       alertOnOffline: true,
       alertOnRecovery: true,
-      monitoringMode: 'simulated',
     },
   });
 
@@ -219,6 +220,11 @@ export default function CreateJob() {
         return;
       }
 
+      // Determine monitoring mode based on account number
+      const monitoringMode = data.accountNumber === TEST_ACCOUNT_NUMBER 
+        ? 'simulated' 
+        : 'real_polling';
+
       // Create the job
       const job = await createJobMutation.mutateAsync({
         account_number: data.accountNumber,
@@ -233,7 +239,7 @@ export default function CreateJob() {
         requester_id: user.id,
         requester_name: user.name,
         source: 'web_app',
-        monitoring_mode: data.monitoringMode,
+        monitoring_mode: monitoringMode,
       });
 
       // Create audit log entry
@@ -248,12 +254,12 @@ export default function CreateJob() {
           duration_minutes: data.durationMinutes,
           cadence_seconds: data.cadenceSeconds,
           reason: data.reason,
-          monitoring_mode: data.monitoringMode,
+          monitoring_mode: monitoringMode,
         },
       });
 
       // Start the ping simulator (only for simulated mode - real_polling is handled by OpenShift pod)
-      startSimulator(job.id, data.cadenceSeconds, data.durationMinutes, undefined, data.monitoringMode);
+      startSimulator(job.id, data.cadenceSeconds, data.durationMinutes, undefined, monitoringMode);
 
       toast({
         title: 'Job Created',
@@ -338,11 +344,19 @@ export default function CreateJob() {
                       <CheckCircle2 className="h-4 w-4" />
                       Account Validated
                     </div>
-                    {validationSource === 'mock' && (
-                      <Badge variant="outline" className="text-xs">
-                        Mock Data
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {accountData.accountNumber === TEST_ACCOUNT_NUMBER && (
+                        <Badge variant="outline" className="text-xs gap-1 bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950 dark:border-amber-700 dark:text-amber-300">
+                          <FlaskConical className="h-3 w-3" />
+                          Simulation Mode
+                        </Badge>
+                      )}
+                      {validationSource === 'mock' && (
+                        <Badge variant="outline" className="text-xs">
+                          Mock Data
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   
                   <div className="text-sm space-y-2">
@@ -590,59 +604,6 @@ export default function CreateJob() {
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="monitoringMode"
-                render={({ field }) => (
-                  <FormItem className="space-y-3">
-                    <FormLabel>Monitoring Mode</FormLabel>
-                    <FormControl>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div
-                          className={`relative flex cursor-pointer rounded-lg border p-4 ${
-                            field.value === 'simulated'
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border hover:border-muted-foreground/50'
-                          }`}
-                          onClick={() => field.onChange('simulated')}
-                        >
-                          <div className="flex items-center gap-3">
-                            <Radio className={`h-5 w-5 ${field.value === 'simulated' ? 'text-primary' : 'text-muted-foreground'}`} />
-                            <div>
-                              <div className="font-medium">Simulated</div>
-                              <div className="text-xs text-muted-foreground">
-                                Demo/test mode with mock data
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        <div
-                          className={`relative flex cursor-pointer rounded-lg border p-4 ${
-                            field.value === 'real_polling'
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border hover:border-muted-foreground/50'
-                          }`}
-                          onClick={() => field.onChange('real_polling')}
-                        >
-                          <div className="flex items-center gap-3">
-                            <Wifi className={`h-5 w-5 ${field.value === 'real_polling' ? 'text-primary' : 'text-muted-foreground'}`} />
-                            <div>
-                              <div className="font-medium">Real Polling</div>
-                              <div className="text-xs text-muted-foreground">
-                                Live SpreeDB ICMP pings
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </FormControl>
-                    <FormDescription>
-                      Select Simulated for testing or Real Polling for production monitoring.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
             </CardContent>
           </Card>
 
