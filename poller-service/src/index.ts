@@ -1,11 +1,14 @@
 import { supabase } from './supabase.js';
 import { pollLatency } from './poller.js';
+import { startApiServer } from './api.js';
 import type { Job, Sample } from './types.js';
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '5000', 10);
+const API_SERVER_PORT = parseInt(process.env.API_SERVER_PORT || '3001', 10);
 
 console.log('Sound Check Poller Service starting...');
 console.log(`Poll interval: ${POLL_INTERVAL_MS}ms`);
+console.log(`API server port: ${API_SERVER_PORT}`);
 
 /**
  * Check if a job has expired based on its start time and duration
@@ -204,6 +207,9 @@ function setupShutdownHandler(): void {
  */
 async function main(): Promise<void> {
   setupShutdownHandler();
+  
+  // Start the HTTP API server
+  startApiServer(API_SERVER_PORT);
   
   console.log('Poller service started. Listening for jobs...');
   

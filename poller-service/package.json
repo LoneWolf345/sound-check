@@ -9,7 +9,9 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.93.2"
+    "@supabase/supabase-js": "^2.93.2",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
