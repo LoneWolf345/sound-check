@@ -1,9 +1,146 @@
 
 
-# Docker-Based OpenShift Deployment for Sound Check
+# Add Real Account Validation via Billing API
 
 ## Overview
-This plan implements Docker containerization for the Vite + React + TypeScript application, using a multi-stage build with Node.js for building and Nginx for serving the static assets.
+Integrate the internal ACP Middleware Account Billing API to validate customer accounts and retrieve service information. Since the billing API is on the internal network (like the SpreeDB poller), the request flow must go through the OpenShift pod.
+
+---
+
+## Architecture
+
+```text
++------------------+     +-------------------+     +-------------------------+
+|   React Web App  |     |  Supabase Edge    |     |  OpenShift Pod          |
+|   (Browser)      |     |  Function (Proxy) |     |  (poller-service)       |
++------------------+     +-------------------+     +-------------------------+
+        |                        |                           |
+        |  1. Validate Account   |                           |
+        +----------------------->|                           |
+        |  (POST /validate-acct) |                           |
+        |                        |  2. Forward request       |
+        |                        +-------------------------->|
+        |                        |  (via internal network)   |
+        |                        |                           |
+        |                        |                   3. Call Billing API
+        |                        |                           +--------+
+        |                        |                           |        |
+        |                        |  4. Return response       |<-------+
+        |                        |<--------------------------+
+        |  5. Display result     |                           |
+        |<-----------------------+                           |
+```
+
+**Wait - Edge Functions can't reach internal networks either!**
+
+After further consideration, the edge function won't be able to reach the OpenShift pod directly. Instead, we need to:
+
+**Option A**: Expose the poller-service as an HTTP API and call it directly from the browser (requires CORS on poller-service)
+
+**Option B**: Call the billing API directly from the poller-service which runs on the internal network, and expose an endpoint
+
+Since the poller-service is already running on the internal network and can access internal APIs, the cleanest approach is:
+
+```text
++------------------+     +---------------------------+     +-------------------+
+|   React Web App  |     |  OpenShift Pod            |     |  Billing API      |
+|   (Browser)      |     |  (poller-service + API)   |     |  (Internal)       |
++------------------+     +---------------------------+     +-------------------+
+        |                        |                              |
+        |  1. Validate Account   |                              |
+        +----------------------->|                              |
+        |  GET /api/accounts/:id |                              |
+        |                        |  2. Forward to Billing API   |
+        |                        +----------------------------->|
+        |                        |                              |
+        |                        |<-----------------------------+
+        |                        |  3. Transform & return       |
+        |  4. Display result     |                              |
+        |<-----------------------+                              |
+```
+
+---
+
+## Implementation Plan
+
+### 1. Extend Poller Service with HTTP API
+
+Transform the poller-service from a background worker into a dual-purpose service:
+- **Background Worker**: Continues polling jobs (existing functionality)
+- **HTTP API**: Exposes endpoints for account validation
+
+**New Dependencies:**
+- `express` - HTTP server framework
+- `cors` - CORS middleware for browser access
+
+**New Endpoints:**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/accounts/:accountNumber` | GET | Validate account and return billing info |
+| `/api/health` | GET | Health check endpoint |
+
+### 2. Create Account Validation Module
+
+New file: `poller-service/src/billing.ts`
+
+Maps the billing API response to a simplified format for the frontend:
+
+**Input**: Account number (e.g., `8160400020005238`)
+
+**API Call**: `GET https://acp-middleware-account-billing-system-prod.apps.prod-ocp4.corp.cableone.net/accounts/{accountNumber}`
+
+**Output**:
+```typescript
+interface ValidatedAccount {
+  accountNumber: string;
+  customerName: string;        // first_name + last_name or business_name
+  customerType: string;        // customer_type (e.g., "residential", "business")
+  accountStatus: string;       // account_status
+  serviceAddress: {
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+  };
+  services: {
+    video: boolean;
+    hsd: boolean;              // High-Speed Data (internet)
+    phone: boolean;
+  };
+  nodeId: string | null;       // For network identification
+  primaryPhone: string | null;
+  email: string | null;
+}
+```
+
+**Error Handling**:
+- 404 from billing API -> Return `{ error: "ACCOUNT_NOT_FOUND", message: "..." }`
+- 500/timeout -> Return `{ error: "API_ERROR", message: "..." }`
+
+### 3. Update Frontend Mock to Support Real API
+
+Modify `src/lib/mock-data.ts` to:
+1. Add a new `validateAccount` function that calls the poller-service API
+2. Keep `mockValidateAccount` as fallback for development/testing
+3. Add configuration for poller-service URL
+
+### 4. Update CreateJob Page
+
+Modify validation to:
+1. Try real API first (if configured)
+2. Fall back to mock if API unavailable
+3. Display richer account information from real API
+
+### 5. Add Environment Configuration
+
+**New Environment Variables:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `BILLING_API_BASE_URL` | Internal billing API URL | `https://acp-middleware-account-billing-system-prod.apps.prod-ocp4.corp.cableone.net` |
+| `API_SERVER_PORT` | Port for HTTP API | `3001` |
+| `VITE_POLLER_SERVICE_URL` | Poller service URL for frontend | `http://soundcheck-api.apps.prod-ocp4.corp.cableone.net` |
 
 ---
 
@@ -11,189 +148,223 @@ This plan implements Docker containerization for the Vite + React + TypeScript a
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | Multi-stage build: Node build + Nginx runtime |
-| `nginx.conf` | Nginx configuration for SPA routing with port 8080 |
-| `.dockerignore` | Exclude unnecessary files from Docker context |
-| `.env.example` | Document all required build-time environment variables |
+| `poller-service/src/billing.ts` | Billing API client |
+| `poller-service/src/api.ts` | Express HTTP API server |
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `README.md` | Add Docker build/run instructions and deployment diagram |
+| `poller-service/package.json` | Add express, cors dependencies |
+| `poller-service/src/index.ts` | Start HTTP API alongside polling worker |
+| `poller-service/src/types.ts` | Add billing API types |
+| `poller-service/.env.example` | Add new environment variables |
+| `src/lib/mock-data.ts` | Add real API client with fallback |
+| `src/pages/CreateJob.tsx` | Use real validation, display richer info |
 
 ---
 
-## Implementation Details
+## Detailed Type Definitions
 
-### 1. Dockerfile (Multi-Stage Build)
+### Billing API Response (from your schema)
 
-**Stage 1: Build**
-- Base: `node:22-alpine` (latest stable LTS)
-- Install dependencies with `npm ci`
-- Build with `npm run build`
-- Pass build-time environment variables via `ARG`
+```typescript
+interface BillingApiResponse {
+  first_name: string;
+  last_name: string;
+  customer_name: string;        // For business accounts
+  business_name: string;
+  customer_type: string;
+  customer_sub_type: string;
+  account_status: string;
+  service_address: {
+    line1: string;
+    line2: string;
+    city: string;
+    state: string;
+    zip: string;
+    postal_code: string;
+  };
+  services: {
+    video: boolean;
+    hsd: boolean;
+    phone: boolean;
+  };
+  node_id: string;
+  primary_phone_number: string;
+  email: Array<{
+    email_address: string;
+    is_primary: boolean;
+  }>;
+  // ... many more fields we don't need
+}
 
-**Stage 2: Runtime**
-- Base: `nginx:alpine`
-- Copy built assets from build stage to `/usr/share/nginx/html`
-- Copy custom nginx config
-- Expose port 8080 (OpenShift requirement - non-root)
-- Run nginx in foreground
-
-```dockerfile
-# Build stage
-FROM node:22-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_PUBLISHABLE_KEY
-ARG VITE_SUPABASE_PROJECT_ID
-RUN npm run build
-
-# Runtime stage
-FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-RUN chown -R nginx:nginx /usr/share/nginx/html && \
-    chmod -R 755 /usr/share/nginx/html
-EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-### 2. Nginx Configuration
-
-Key features:
-- Listen on port 8080 (OpenShift non-root compatible)
-- Serve static files from `/usr/share/nginx/html`
-- SPA fallback: `try_files $uri $uri/ /index.html`
-- Gzip compression for assets
-- Proper caching headers for static assets
-
-```nginx
-server {
-    listen 8080;
-    server_name _;
-    root /usr/share/nginx/html;
-    index index.html;
-
-    # SPA routing - fallback to index.html
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Cache static assets
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # Gzip compression
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript;
+interface BillingApiError {
+  code: string;           // "ACCOUNT_NOT_FOUND"
+  description: string;    // "Could not find the account..."
 }
 ```
 
-### 3. .dockerignore
+### Transformed Response for Frontend
 
-Exclude development files to reduce build context size:
-
-```
-node_modules
-dist
-.git
-.gitignore
-*.md
-.env
-.env.*
-!.env.example
-*.log
-.vscode
-.idea
-poller-service/node_modules
-```
-
-### 4. .env.example (Build-Time Variables)
-
-Document all environment variables the app needs at build time:
-
-```bash
-# Supabase Configuration (required)
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key-here
-VITE_SUPABASE_PROJECT_ID=your-project-id
-
-# Optional: Additional API endpoints
-# VITE_API_BASE_URL=https://api.example.com
-```
-
-### 5. README.md Updates
-
-Add a new section for Docker deployment:
-
-**Docker Build/Run Instructions:**
-```bash
-# Build the image with environment variables
-docker build \
-  --build-arg VITE_SUPABASE_URL="https://xxx.supabase.co" \
-  --build-arg VITE_SUPABASE_PUBLISHABLE_KEY="your-key" \
-  --build-arg VITE_SUPABASE_PROJECT_ID="your-project-id" \
-  -t soundcheck-app:latest .
-
-# Run locally for testing
-docker run -p 8080:8080 soundcheck-app:latest
-```
-
-**Mermaid Deployment Diagram:**
-```
-sequenceDiagram
-    participant Dev as Developer
-    participant Docker as Docker Build
-    participant Registry as Container Registry
-    participant OCP as OpenShift
-
-    Dev->>Docker: docker build --build-arg VITE_*
-    Docker->>Docker: npm ci && npm run build
-    Docker->>Docker: Copy dist to nginx
-    Docker->>Registry: docker push
-    Registry->>OCP: oc new-app / deploy
-    OCP->>OCP: Run container on port 8080
-    OCP-->>Dev: App available at route
+```typescript
+interface AccountValidationResult {
+  success: boolean;
+  account?: {
+    accountNumber: string;
+    customerName: string;
+    customerType: 'residential' | 'business';
+    accountStatus: string;
+    serviceAddress: string;    // Formatted single line
+    services: {
+      video: boolean;
+      hsd: boolean;
+      phone: boolean;
+    };
+    nodeId: string | null;
+    primaryPhone: string | null;
+    primaryEmail: string | null;
+  };
+  error?: {
+    code: string;
+    message: string;
+  };
+}
 ```
 
 ---
 
-## Technical Notes
+## API Server Implementation
 
-### Port 8080 Rationale
-OpenShift runs containers as non-root by default. Port 8080 is:
-- Above 1024 (no root required)
-- Standard for OpenShift web applications
-- Already used by Vite dev server (consistent)
+### Express Server (`poller-service/src/api.ts`)
 
-### Build-Time vs Runtime Environment Variables
-Vite embeds `VITE_*` variables at build time into the JavaScript bundle. This means:
-- Variables must be passed as `--build-arg` during `docker build`
-- Different environments need separate image builds
-- This is standard for Vite/React apps
+```typescript
+import express from 'express';
+import cors from 'cors';
+import { validateAccount } from './billing.js';
 
-### SPA Routing
-The nginx config uses `try_files $uri $uri/ /index.html` to:
-- Serve static files if they exist
-- Fall back to `index.html` for client-side routing
-- Essential for React Router to work properly
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Account validation
+app.get('/api/accounts/:accountNumber', async (req, res) => {
+  const { accountNumber } = req.params;
+  
+  if (!accountNumber || accountNumber.length < 9) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_INPUT', message: 'Invalid account number' }
+    });
+  }
+  
+  try {
+    const result = await validateAccount(accountNumber);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: { code: 'API_ERROR', message: 'Failed to validate account' }
+    });
+  }
+});
+
+export function startApiServer(port: number = 3001) {
+  app.listen(port, () => {
+    console.log(`API server listening on port ${port}`);
+  });
+}
+```
+
+### Updated Main Entry Point
+
+```typescript
+// poller-service/src/index.ts
+import { startApiServer } from './api.js';
+
+// ... existing polling code ...
+
+// Start HTTP API server
+const API_PORT = parseInt(process.env.API_SERVER_PORT || '3001', 10);
+startApiServer(API_PORT);
+
+// Start polling loop
+async function main() {
+  // ... existing code
+}
+```
 
 ---
 
-## File Summary
+## Frontend Integration
 
-| File | Action | Lines |
-|------|--------|-------|
-| `Dockerfile` | Create | ~30 |
-| `nginx.conf` | Create | ~25 |
-| `.dockerignore` | Create | ~15 |
-| `.env.example` | Create | ~10 |
-| `README.md` | Modify | Add ~60 lines |
+### Updated Mock Data / API Client
+
+```typescript
+// src/lib/account-validation.ts (new file)
+const POLLER_SERVICE_URL = import.meta.env.VITE_POLLER_SERVICE_URL;
+
+export async function validateAccount(accountNumber: string): Promise<AccountValidationResult> {
+  // If poller service URL is configured, use real API
+  if (POLLER_SERVICE_URL) {
+    try {
+      const response = await fetch(
+        `${POLLER_SERVICE_URL}/api/accounts/${encodeURIComponent(accountNumber)}`
+      );
+      return await response.json();
+    } catch (error) {
+      console.warn('Real API failed, falling back to mock:', error);
+    }
+  }
+  
+  // Fallback to mock validation
+  return mockValidateAccount(accountNumber);
+}
+```
+
+### Enhanced Account Display
+
+The CreateJob page will display more information from the real API:
+- Customer name and type
+- Full service address
+- Active services (Video, Internet, Phone)
+- Account status (with warning for inactive accounts)
+
+---
+
+## Security Considerations
+
+1. **CORS Configuration**: The API server uses CORS to allow browser requests. In production, restrict origins to the app domain.
+
+2. **No Sensitive Data Exposure**: The billing API returns sensitive data (SSN, driver's license). The poller-service transforms the response to only include what the frontend needs.
+
+3. **Internal Network Only**: The billing API is only accessible from the internal network. The poller-service acts as a secure gateway.
+
+4. **Rate Limiting**: Consider adding rate limiting to the API endpoints in production.
+
+---
+
+## Testing
+
+1. **Local Development**: Use mock validation (no `VITE_POLLER_SERVICE_URL` set)
+2. **VPN/Internal Network**: Set `VITE_POLLER_SERVICE_URL` to the poller-service endpoint
+3. **Production**: Configure the environment variable in the OpenShift deployment
+
+---
+
+## Implementation Sequence
+
+1. Add Express dependencies to poller-service
+2. Create billing API client module
+3. Create HTTP API server module  
+4. Update poller-service entry point to start both services
+5. Update environment variable templates
+6. Create frontend API client with fallback
+7. Update CreateJob page to use new validation
+8. Test end-to-end with real API
 
