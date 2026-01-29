@@ -121,11 +121,17 @@ export default function CreateJob() {
   });
 
   async function handleValidateAccount() {
-    const accountNumber = form.getValues('accountNumber');
-    if (!accountNumber || accountNumber.length < 9) {
-      setAccountError('Please enter a valid account number (at least 9 digits)');
+    // Clear previous API error before validation
+    setAccountError(null);
+    
+    // Run Zod validation first - this will show form errors for invalid format
+    const isValid = await form.trigger('accountNumber');
+    if (!isValid) {
+      // Form validation message will display via FormMessage, no need for duplicate error
       return;
     }
+    
+    const accountNumber = form.getValues('accountNumber');
 
     setIsValidating(true);
     setAccountError(null);
