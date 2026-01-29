@@ -73,7 +73,7 @@ export default function JobDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { internalUser: user } = useAuthContext();
+  const { user, profile } = useAuthContext();
   const queryClient = useQueryClient();
   const hasCheckedJob = useRef(false);
 
@@ -191,8 +191,8 @@ export default function JobDetail() {
         action: 'job.cancel',
         entityType: 'job',
         entityId: job.id,
-        actorId: user.id,
-        actorName: user.name,
+        actorId: user!.id,
+        actorName: profile?.display_name || user!.email || 'Unknown',
         details: {
           account_number: job.account_number,
           cancelled_after_minutes: Math.round(

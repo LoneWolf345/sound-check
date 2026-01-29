@@ -7,17 +7,17 @@ import {
   Settings,
   FileText,
   User,
-  ChevronDown,
   Menu,
   X,
   AudioWaveform,
-  Loader2,
+  LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -36,7 +36,7 @@ const adminItems = [
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { internalUser, internalUsers, switchUser, isAdmin, isLoading, isSwitching } = useAuthContext();
+  const { profile, isAdmin, isLoading, signOut } = useAuthContext();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -101,45 +101,33 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               ))}
           </nav>
 
-          {/* User Switcher */}
+          {/* User Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-2" disabled={isSwitching}>
-                {isSwitching ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <User className="h-4 w-4" />
-                )}
+              <Button variant="ghost" className="gap-2">
+                <User className="h-4 w-4" />
                 <span className="hidden sm:inline">
-                  {isLoading ? 'Loading...' : internalUser?.name ?? 'Sign In'}
+                  {isLoading ? 'Loading...' : profile?.display_name ?? 'User'}
                 </span>
                 {isAdmin && (
                   <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
                     Admin
                   </span>
                 )}
-                <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 bg-popover">
-              {internalUsers.map((u) => (
-                <DropdownMenuItem
-                  key={u.email}
-                  onClick={() => switchUser(u.email)}
-                  disabled={isSwitching}
-                  className={cn(
-                    'flex items-center justify-between',
-                    u.email === internalUser?.email && 'bg-accent'
-                  )}
-                >
-                  <span>{u.name}</span>
-                  {u.isAdmin && (
-                    <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                      Admin
-                    </span>
-                  )}
-                </DropdownMenuItem>
-              ))}
+              <div className="px-2 py-1.5">
+                <p className="text-sm font-medium">{profile?.display_name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {isAdmin ? 'Administrator' : 'User'}
+                </p>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={signOut} className="text-destructive">
+                <LogOut className="h-4 w-4 mr-2" />
+                Sign Out
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

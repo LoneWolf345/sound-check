@@ -1,22 +1,20 @@
 import React, { createContext, useContext, ReactNode } from 'react';
-import { useAuth, INTERNAL_USERS, type InternalUser } from '@/hooks/use-auth';
+import { useAuth, type Profile } from '@/hooks/use-auth';
 import type { User } from '@supabase/supabase-js';
 
 interface AuthContextValue {
   // Supabase auth user
   user: User | null;
-  // Internal user with name and admin flag
-  internalUser: InternalUser | null;
+  // User profile with display name
+  profile: Profile | null;
   // Admin status from database
   isAdmin: boolean;
   // Loading state
   isLoading: boolean;
-  // Switching users
-  isSwitching: boolean;
-  // Available internal users for switcher
-  internalUsers: Omit<InternalUser, 'id'>[];
-  // Switch to a different internal user
-  switchUser: (email: string) => Promise<{ user: User | null; error: Error | null }>;
+  // Sign in with email/password
+  signIn: (email: string, password: string) => Promise<{ user: User | null; error: Error | null }>;
+  // Sign up with email/password and display name
+  signUp: (email: string, password: string, displayName: string) => Promise<{ user: User | null; error: Error | null }>;
   // Sign out
   signOut: () => Promise<void>;
 }
@@ -28,12 +26,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value: AuthContextValue = {
     user: auth.user,
-    internalUser: auth.internalUser,
+    profile: auth.profile,
     isAdmin: auth.isAdmin,
     isLoading: auth.isLoading,
-    isSwitching: auth.isSwitching,
-    internalUsers: INTERNAL_USERS,
-    switchUser: auth.switchUser,
+    signIn: auth.signIn,
+    signUp: auth.signUp,
     signOut: auth.signOut,
   };
 

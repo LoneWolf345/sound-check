@@ -57,7 +57,7 @@ function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'de
 export default function JobList() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { internalUser: user } = useAuthContext();
+  const { user, profile } = useAuthContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'all'>('all');
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
@@ -85,8 +85,8 @@ export default function JobList() {
         action: 'job.cancel',
         entityType: 'job',
         entityId: job.id,
-        actorId: user.id,
-        actorName: user.name,
+        actorId: user!.id,
+        actorName: profile?.display_name || user!.email || 'Unknown',
         details: {
           account_number: job.account_number,
           cancelled_after_minutes: Math.round(
