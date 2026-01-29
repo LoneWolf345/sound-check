@@ -39,8 +39,19 @@ import { startSimulator } from '@/lib/ping-simulator';
 // Test account number triggers simulated mode
 const TEST_ACCOUNT_NUMBER = '123456789';
 
+// Validate account number: test accounts (9 digits starting with 1-3) or real accounts (16 digits starting with 8160)
+const isValidAccountNumber = (value: string): boolean => {
+  // Test account pattern: 9 digits starting with 1, 2, or 3
+  if (/^[123]\d{8}$/.test(value)) return true;
+  // Real account pattern: 16 digits starting with 8160
+  if (/^8160\d{12}$/.test(value)) return true;
+  return false;
+};
+
 const jobFormSchema = z.object({
-  accountNumber: z.string().min(9, 'Account number must be at least 9 digits').max(12),
+  accountNumber: z.string()
+    .min(9, 'Account number must be at least 9 digits')
+    .refine(isValidAccountNumber, 'Account must be 16 digits starting with 8160, or use test account 123456789'),
   targetIp: z.string().refine(isValidIpAddress, 'Invalid IP address format'),
   targetMac: z.string().optional(), // Auto-populated from device lookup
   durationMinutes: z.number().min(1),
