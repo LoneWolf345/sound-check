@@ -1,150 +1,124 @@
 
+## What’s happening (root cause)
 
-# Improve Account Validation Error Reporting
+You’re still seeing **“Account {X} not found”** even though the real validation endpoint isn’t reachable because the current frontend flow can end up in “mock mode” without ever attempting the real API, and then the mock validator returns the generic “not found” message.
 
-## Problem
-When using a real account number in the dev environment, the poller service API cannot be reached. The current code silently falls back to mock validation, which rejects real account numbers with a misleading "Account not found" error.
+From the current code:
 
-**Current Flow:**
-1. API call fails (network error/unreachable)
-2. Falls through to mock validation
-3. Real account number doesn't match mock pattern (`^[123]\d{8}$`)
-4. Returns "Account not found" - **misleading!**
+1) **The “Validate” button bypasses Zod/RHF validation**
+- In `src/pages/CreateJob.tsx`, `handleValidateAccount()` reads the value via `form.getValues('accountNumber')` and only checks `length < 9`.
+- It does **not** call `form.trigger('accountNumber')`, so the Zod rule:
+  - test accounts: `^[123]\d{8}$`
+  - real accounts: `^8160\d{12}$` (16 digits)
+  can be bypassed by clicking Validate.
+- Result: users can validate an invalid “real-looking” account (wrong length), and the system proceeds to `validateAccount()` anyway.
 
-## Solution
-Add specific error codes and messages to distinguish between failure scenarios:
+2) **In dev, the real API is not configured (so it never tries it)**
+- `src/lib/account-validation.ts` only tries the real API if `import.meta.env.VITE_POLLER_SERVICE_URL` is set.
+- When it’s not set, it always falls back to mock validation.
+- When mock doesn’t recognize the number, it returns:
+  - `code: 'ACCOUNT_NOT_FOUND'`
+  - `message: Account {accountNumber} not found`
+- That matches your console logs: **`[AccountValidation] Using mock validation`** (meaning the app never even attempted the endpoint).
 
-| Scenario | Error Code | User Message |
-|----------|------------|--------------|
-| Network error/timeout | `API_UNREACHABLE` | "Unable to reach validation service. Using test mode instead." |
-| API returned 404 | `ACCOUNT_NOT_FOUND` | "Account {number} not found" |
-| API returned error | `API_ERROR` | "Validation service error: {details}" |
-| Mock fallback, no match | `MOCK_NO_MATCH` | "Account not found in test data. Try test account 123456789." |
-
-## Changes to `src/lib/account-validation.ts`
-
-### 1. Track API failure reason
-
-Instead of silently falling through to mock, capture the specific failure:
-
-```typescript
-export async function validateAccount(accountNumber: string): Promise<AccountValidationResult> {
-  let apiError: { code: string; message: string } | null = null;
-  
-  if (POLLER_SERVICE_URL) {
-    try {
-      const response = await fetch(...);
-      
-      if (!response.ok) {
-        // API responded with error status
-        if (response.status === 404) {
-          return {
-            success: false,
-            error: { code: 'ACCOUNT_NOT_FOUND', message: `Account ${accountNumber} not found` },
-            source: 'api',
-          };
-        }
-        // Other API errors
-        return {
-          success: false,
-          error: { code: 'API_ERROR', message: `Validation service returned status ${response.status}` },
-          source: 'api',
-        };
-      }
-      
-      const result = await response.json();
-      return { ...result, source: 'api' };
-      
-    } catch (error) {
-      // Network error - capture for later
-      apiError = {
-        code: 'API_UNREACHABLE',
-        message: error instanceof Error ? error.message : 'Unable to reach validation service',
-      };
-      console.warn('[AccountValidation] API unreachable:', apiError.message);
-    }
-  }
-  
-  // Mock validation fallback
-  const mockResult = await mockValidateAccount(accountNumber);
-  
-  if (mockResult) {
-    return {
-      success: true,
-      account: convertMockToValidatedAccount(mockResult),
-      source: 'mock',
-      warning: apiError ? 'Validation service unavailable. Using test data.' : undefined,
-    };
-  }
-  
-  // Mock didn't match - provide helpful message
-  return {
-    success: false,
-    error: {
-      code: apiError ? 'API_UNREACHABLE' : 'ACCOUNT_NOT_FOUND',
-      message: apiError 
-        ? `Unable to reach validation service. For testing, use account 123456789.`
-        : `Account ${accountNumber} not found`,
-    },
-    source: 'mock',
-  };
-}
-```
-
-### 2. Add warning field to result interface
-
-```typescript
-export interface AccountValidationResult {
-  success: boolean;
-  account?: ValidatedAccount;
-  error?: {
-    code: string;
-    message: string;
-  };
-  warning?: string;  // NEW: Non-blocking warning message
-  source: 'api' | 'mock';
-}
-```
-
-### 3. Update CreateJob.tsx to show warnings
-
-Display the warning when API was unreachable but mock succeeded:
-
-```typescript
-// In handleValidateAccount:
-if (result.success && result.account) {
-  setAccountData(result.account);
-  if (result.warning) {
-    // Show non-blocking warning
-    toast({
-      title: 'Notice',
-      description: result.warning,
-      variant: 'default',
-    });
-  }
-}
-```
+So the “not found” message is not evidence that the endpoint was reached; it’s coming from the **mock fallback path**.
 
 ---
 
-## Files to Modify
+## Goal
 
-| File | Changes |
-|------|---------|
-| `src/lib/account-validation.ts` | Improve error handling with specific codes and messages |
-| `src/pages/CreateJob.tsx` | Display warning toast when API unreachable but mock works |
+When a user enters a real account number (starts with `8160`, exactly 16 digits):
+- If the validation endpoint is **unreachable** → show **API_UNREACHABLE** (or similar), not “not found”.
+- If the endpoint is **not configured in this environment** → show **API_NOT_CONFIGURED / API_UNAVAILABLE** with a clear message.
+- Also prevent “Validate” from running at all when the account number format is invalid.
 
-## User Experience
+---
 
-**Scenario 1: Real account, API unreachable (dev environment)**
-- Error: "Unable to reach validation service. For testing, use account 123456789."
-- Error code: `API_UNREACHABLE`
+## Implementation Plan
 
-**Scenario 2: Test account 123456789, API unreachable**
-- Success with mock data
-- Toast warning: "Validation service unavailable. Using test data."
+### A) Enforce account format validation when clicking “Validate” (UI fix)
+**File:** `src/pages/CreateJob.tsx`
 
-**Scenario 3: Real account, API reachable, account not found**
-- Error: "Account 8160400020005238 not found"
-- Error code: `ACCOUNT_NOT_FOUND`
+1. Update `handleValidateAccount()` to run field validation before calling `validateAccount()`:
+   - Add: `const isValid = await form.trigger('accountNumber');`
+   - If not valid:
+     - Do not call `validateAccount()`
+     - Clear any previous API error state (optional) so the user only sees the form validation message
+2. Remove/replace the current `length < 9` check, since it’s incomplete and contradicts the real-account rule.
 
+**Why this matters:** it prevents scenarios like entering `8160...` with the wrong length and still getting a misleading “not found” from the mock layer.
+
+---
+
+### B) Make account-validation return accurate errors when real API isn’t available (logic fix)
+**File:** `src/lib/account-validation.ts`
+
+1. Add simple helpers (local, no exports needed):
+   - `isTestAccountNumber(accountNumber)` → `^[123]\d{8}$`
+   - `isRealAccountNumber(accountNumber)` → `^8160\d{12}$`
+
+2. Adjust behavior when the poller-service URL is missing:
+   - If `!POLLER_SERVICE_URL`:
+     - If `isTestAccountNumber(accountNumber)`:
+       - Run mock validation as today (success + maybe add a small warning like “Using test data”)
+     - If `isRealAccountNumber(accountNumber)`:
+       - Return **success: false** with:
+         - `error.code = 'API_NOT_CONFIGURED'` (or `'API_UNAVAILABLE'`)
+         - `error.message = 'Real account validation is not available in this environment right now. Please try again later or use test account 123456789.'`
+       - This avoids “Account not found” which implies a lookup happened.
+     - Else:
+       - Return **success: false** with:
+         - `error.code = 'INVALID_ACCOUNT_FORMAT'` (optional but helpful)
+         - `error.message` matching your expected formats
+
+3. Keep existing behavior when `POLLER_SERVICE_URL` is set:
+   - If fetch throws → `API_UNREACHABLE`
+   - If response is 404 → `ACCOUNT_NOT_FOUND`
+   - Otherwise → success
+   - If mock succeeds after API_UNREACHABLE → return warning toast as you already implemented
+
+**Why this matters:** it distinguishes:
+- “We tried, but can’t reach the service” vs
+- “This environment isn’t set up to call the service” vs
+- “The account truly does not exist”
+
+---
+
+### C) (Optional) Improve the user-facing message placement
+**File:** `src/pages/CreateJob.tsx`
+
+Right now you show:
+- Zod errors via `<FormMessage />`
+- API errors via the separate `accountError` banner
+
+After step A, invalid-format issues will appear consistently in `FormMessage`, and API/service errors will appear in the banner. If you want everything in one place, we can consolidate later, but it’s not required to fix correctness.
+
+---
+
+## Acceptance criteria / how we’ll verify
+
+1. Enter an invalid account like `8160123456789` (wrong length):
+   - Clicking Validate should not call validation logic
+   - Should show the form error: “Account must be 16 digits starting with 8160, or use test account 123456789”
+
+2. Enter a valid real account format `8160XXXXXXXXXXXX` (16 digits):
+   - In dev (no endpoint configured): should show **“Real account validation is not available in this environment…”**
+   - No “Account not found”
+
+3. Enter test account `123456789`:
+   - Should succeed using mock and show the existing warning/toast behavior if applicable
+
+4. In an environment where `VITE_POLLER_SERVICE_URL` is configured but unreachable:
+   - Should show **API_UNREACHABLE** messaging, not “not found”
+
+---
+
+## Files to change
+
+- `src/pages/CreateJob.tsx`
+  - Add `form.trigger('accountNumber')` guard inside `handleValidateAccount()`
+  - Remove the incomplete `length < 9` logic
+
+- `src/lib/account-validation.ts`
+  - Add explicit handling for “real account but API not configured”
+  - Return clearer error codes/messages in mock fallback scenarios
