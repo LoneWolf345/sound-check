@@ -40,3 +40,11 @@ export interface PollResult {
   poller?: string;
   error?: string;
 }
+
+// Re-export billing types for convenience
+export type {
+  AccountValidationResult,
+  ValidatedAccount,
+  BillingApiResponse,
+  BillingApiError,
+} from './billing.js';

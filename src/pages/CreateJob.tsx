@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Loader2, CheckCircle2, AlertCircle, Search, Radio, Wifi } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, Search, Radio, Wifi, Tv, Phone, Monitor, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -28,7 +29,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { isValidMacAddress, isValidIpAddress, formatDurationFromMinutes, formatCadence, convertToMinutes } from '@/lib/format';
-import { mockValidateAccount, type MockBillingAccount } from '@/lib/mock-data';
+import { validateAccount, isRealApiConfigured, type ValidatedAccount } from '@/lib/account-validation';
 import { useCreateJob, checkUsageLimits, checkDuplicateRunningJob } from '@/hooks/use-jobs';
 import { useAdminConfig } from '@/hooks/use-admin-config';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
@@ -64,8 +65,9 @@ export default function CreateJob() {
   const { toast } = useToast();
   const { internalUser: user } = useAuthContext();
   const [isValidating, setIsValidating] = useState(false);
-  const [accountData, setAccountData] = useState<MockBillingAccount | null>(null);
+  const [accountData, setAccountData] = useState<ValidatedAccount | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [validationSource, setValidationSource] = useState<'api' | 'mock' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const createJobMutation = useCreateJob();
@@ -109,31 +111,34 @@ export default function CreateJob() {
 
   const watchTargetType = form.watch('targetType');
 
-  async function validateAccount() {
+  async function handleValidateAccount() {
     const accountNumber = form.getValues('accountNumber');
     if (!accountNumber || accountNumber.length < 9) {
-      setAccountError('Please enter a valid account number');
+      setAccountError('Please enter a valid account number (at least 9 digits)');
       return;
     }
 
     setIsValidating(true);
     setAccountError(null);
     setAccountData(null);
+    setValidationSource(null);
 
     try {
-      const result = await mockValidateAccount(accountNumber);
-      if (result) {
-        setAccountData(result);
-        // Auto-fill modem data if available
-        if (result.modems.length > 0) {
-          form.setValue('targetMac', result.modems[0].macAddress);
-          form.setValue('targetIp', result.modems[0].managementIp);
+      const result = await validateAccount(accountNumber);
+      setValidationSource(result.source);
+      
+      if (result.success && result.account) {
+        setAccountData(result.account);
+        
+        // Pre-fill notification email if available
+        if (result.account.primaryEmail && !form.getValues('notificationEmail')) {
+          form.setValue('notificationEmail', result.account.primaryEmail);
         }
       } else {
-        setAccountError('Account not found or invalid');
+        setAccountError(result.error?.message || 'Account not found or invalid');
       }
     } catch {
-      setAccountError('Failed to validate account');
+      setAccountError('Failed to validate account. Please try again.');
     } finally {
       setIsValidating(false);
     }
@@ -166,7 +171,7 @@ export default function CreateJob() {
 
       // Check for duplicate running jobs
       const targetMac = data.targetType === 'mac' ? data.targetMac ?? null : null;
-      const targetIp = data.targetType === 'ip' ? data.targetIp ?? null : (accountData?.modems[0]?.managementIp ?? null);
+      const targetIp = data.targetType === 'ip' ? data.targetIp ?? null : null;
 
       const duplicateCheck = await checkDuplicateRunningJob(targetMac, targetIp);
       if (duplicateCheck.isDuplicate) {
@@ -186,7 +191,7 @@ export default function CreateJob() {
       const job = await createJobMutation.mutateAsync({
         account_number: data.accountNumber,
         target_mac: data.targetType === 'mac' ? data.targetMac : null,
-        target_ip: data.targetType === 'ip' ? data.targetIp : (accountData?.modems[0]?.managementIp ?? null),
+        target_ip: data.targetType === 'ip' ? data.targetIp : null,
         duration_minutes: data.durationMinutes,
         cadence_seconds: data.cadenceSeconds,
         reason: data.reason,
@@ -274,7 +279,7 @@ export default function CreateJob() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={validateAccount}
+                    onClick={handleValidateAccount}
                     disabled={isValidating}
                   >
                     {isValidating ? (
@@ -295,21 +300,86 @@ export default function CreateJob() {
               )}
 
               {accountData && (
-                <div className="rounded-md bg-accent/50 p-4 space-y-2">
-                  <div className="flex items-center gap-2 text-sm font-medium text-primary">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Account Validated
-                  </div>
-                  <div className="text-sm space-y-1">
-                    <p><span className="text-muted-foreground">Customer:</span> {accountData.customerName}</p>
-                    <p><span className="text-muted-foreground">Address:</span> {accountData.serviceAddress}</p>
-                    {accountData.modems.length > 0 && (
-                      <p>
-                        <span className="text-muted-foreground">Modem:</span>{' '}
-                        {accountData.modems[0].model} ({accountData.modems[0].status})
-                      </p>
+                <div className="rounded-md bg-accent/50 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-medium text-primary">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Account Validated
+                    </div>
+                    {validationSource === 'mock' && (
+                      <Badge variant="outline" className="text-xs">
+                        Mock Data
+                      </Badge>
                     )}
                   </div>
+                  
+                  <div className="text-sm space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Customer:</span>
+                      <span className="font-medium">{accountData.customerName}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Type:</span>
+                      <Badge variant="secondary" className="capitalize">
+                        {accountData.customerType}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Status:</span>
+                      <Badge 
+                        variant={accountData.accountStatus.toLowerCase() === 'active' ? 'default' : 'destructive'}
+                        className="capitalize"
+                      >
+                        {accountData.accountStatus}
+                      </Badge>
+                    </div>
+                    {accountData.serviceAddress && (
+                      <div className="pt-1">
+                        <span className="text-muted-foreground">Address:</span>
+                        <p className="mt-0.5">{accountData.serviceAddress}</p>
+                      </div>
+                    )}
+                    
+                    {/* Services badges */}
+                    <div className="flex items-center gap-2 pt-2">
+                      <span className="text-muted-foreground text-xs">Services:</span>
+                      <div className="flex gap-1.5">
+                        {accountData.services.hsd && (
+                          <Badge variant="outline" className="text-xs gap-1">
+                            <Wifi className="h-3 w-3" />
+                            Internet
+                          </Badge>
+                        )}
+                        {accountData.services.video && (
+                          <Badge variant="outline" className="text-xs gap-1">
+                            <Tv className="h-3 w-3" />
+                            Video
+                          </Badge>
+                        )}
+                        {accountData.services.phone && (
+                          <Badge variant="outline" className="text-xs gap-1">
+                            <Phone className="h-3 w-3" />
+                            Phone
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {accountData.nodeId && (
+                      <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
+                        <span>Node ID:</span>
+                        <code className="bg-muted px-1.5 py-0.5 rounded">{accountData.nodeId}</code>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Warning for non-active accounts */}
+                  {accountData.accountStatus.toLowerCase() !== 'active' && (
+                    <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 rounded p-2 mt-2">
+                      <AlertTriangle className="h-4 w-4" />
+                      <span>Account is not active. Monitoring may not produce expected results.</span>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
