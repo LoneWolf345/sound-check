@@ -366,7 +366,11 @@ export default function CreateJob() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Type:</span>
-                      <Badge variant="secondary" className="capitalize">
+                      <Badge 
+                        variant={accountData.customerType.toLowerCase() === 'residential' ? 'default' : 'secondary'}
+                        className="capitalize"
+                        style={accountData.customerType.toLowerCase() !== 'residential' ? { backgroundColor: '#0060AE', color: 'white' } : undefined}
+                      >
                         {accountData.customerType}
                       </Badge>
                     </div>
