@@ -1,397 +1,179 @@
 
 
-# Change Target Configuration to IP-Based Device Lookup
+# Remove Monitoring Mode Section - Auto-Detect Based on Test Account
 
 ## Overview
-Replace the current MAC/IP dropdown selection with a simplified flow where the user enters an IP address, and on blur, the system fetches device information (MAC address, Make, Model) from the SpreeDB CM Info API.
+Simplify the job creation form by removing the manual "Monitoring Mode" selection. Instead, automatically determine the mode based on the account number:
+- **Account `123456789`** → Use `simulated` mode (test/demo)
+- **Any other account** → Use `real_polling` mode (production)
+
+This creates a cleaner user experience while still allowing internal testing with mock data.
 
 ---
 
-## Architecture
+## Changes Summary
 
-```text
-+------------------+     +---------------------------+     +-------------------+
-|   React Web App  |     |  OpenShift Pod            |     |  SpreeDB CM API   |
-|   (Browser)      |     |  (poller-service + API)   |     |  (Internal)       |
-+------------------+     +---------------------------+     +-------------------+
-        |                        |                              |
-        | 1. User enters IP      |                              |
-        |    (onBlur triggers)   |                              |
-        +----------------------->|                              |
-        | GET /api/devices/:ip   |                              |
-        |                        | 2. Forward to SpreeDB        |
-        |                        +----------------------------->|
-        |                        | GET /cm/info/{ip}            |
-        |                        |<-----------------------------+
-        |                        | 3. Transform & return        |
-        | 4. Display device info |                              |
-        |<-----------------------+                              |
-        | (MAC, Make, Model)     |                              |
-```
+| File | Action | Description |
+|------|--------|-------------|
+| `src/pages/CreateJob.tsx` | Modify | Remove monitoring mode UI, auto-set based on account |
+| `src/lib/mock-data.ts` | Modify | Update mock validation to accept `123456789` |
 
 ---
 
-## Implementation Plan
+## Implementation Details
 
-### 1. Add New Device Info Endpoint to Poller Service
+### 1. Update Form Schema
 
-Create a new module and endpoint to fetch device information from the SpreeDB CM Info API.
+Remove `monitoringMode` from the form schema since it will be computed automatically:
 
-**New Endpoint:** `GET /api/devices/:ipAddress`
-
-**API Called:** `http://phoenix.polling.corp.cableone.net:4402/cm/info/{ipAddress}`
-
-**Response Mapping:**
-
-| SpreeDB Field | Frontend Field | Description |
-|---------------|----------------|-------------|
-| `ifPhysAddress` | `macAddress` | Device MAC address |
-| `sysName` | `model` | Short model name (e.g., "CVA4004TCH1") |
-| `sysDescr` | `make` | Extracted vendor (e.g., "Technicolor") |
-| `docsIfDocsisBaseCapability` | `docsisVersion` | DOCSIS version |
-| `sysUpTime` | `uptime` | Device uptime |
-| `error` | (for error handling) | Check if device not found |
-
-### 2. Update Frontend Form
-
-**Remove:**
-- Target Type dropdown (MAC/IP selector)
-- Conditional MAC Address field
-
-**Replace with:**
-- Single IP Address input field
-- On blur validation to fetch device info
-- Display panel showing MAC address, Make, and Model
-
-### 3. Type Definitions
-
-**New Types for Device Info:**
-
-```typescript
-// poller-service/src/types.ts
-interface DeviceInfoResponse {
-  docsDevSerialNumber: string;
-  docsDevSwCurrentVers: string;
-  docsIfDocsisBaseCapability: string;
-  error: string;
-  ifPhysAddress: string;
-  sysDescr: string;
-  sysName: string;
-  sysUpTime: string;
-}
-
-interface DeviceInfo {
-  ipAddress: string;
-  macAddress: string;
-  make: string;
-  model: string;
-  serialNumber: string;
-  docsisVersion: string;
-  firmwareVersion: string;
-  uptime: string;
-}
-
-interface DeviceValidationResult {
-  success: boolean;
-  device?: DeviceInfo;
-  error?: {
-    code: string;
-    message: string;
-  };
-}
-```
-
----
-
-## Files to Create
-
-| File | Purpose |
-|------|---------|
-| `poller-service/src/device.ts` | SpreeDB CM Info API client |
-| `src/lib/device-validation.ts` | Frontend API client for device lookup |
-
-## Files to Modify
-
-| File | Changes |
-|------|---------|
-| `poller-service/src/api.ts` | Add `/api/devices/:ipAddress` endpoint |
-| `poller-service/src/types.ts` | Add device info types |
-| `poller-service/.env.example` | Document CM_INFO_API_BASE_URL |
-| `src/pages/CreateJob.tsx` | Replace MAC/IP selector with IP + device lookup |
-| `.env.example` | No changes needed (uses same VITE_POLLER_SERVICE_URL) |
-
----
-
-## Detailed Implementation
-
-### Backend: Device Info Module (`poller-service/src/device.ts`)
-
-```typescript
-const CM_INFO_API_BASE_URL = process.env.CM_INFO_API_BASE_URL || 
-  'http://phoenix.polling.corp.cableone.net:4402';
-
-interface CmInfoResponse {
-  docsDevSerialNumber: string;
-  docsDevSwCurrentVers: string;
-  docsIfDocsisBaseCapability: string;
-  error: string;
-  ifPhysAddress: string;
-  sysDescr: string;
-  sysName: string;
-  sysUpTime: string;
-}
-
-function extractMakeFromDescription(sysDescr: string): string {
-  // Example: "Technicolor CVA4004TCH1 DOCSIS 3.1 Cable Modem <<HW_REV: ...>>"
-  // Extract first word which is typically the vendor
-  const match = sysDescr.match(/^(\w+)/);
-  return match ? match[1] : 'Unknown';
-}
-
-export async function getDeviceInfo(ipAddress: string): Promise<DeviceValidationResult> {
-  const url = `${CM_INFO_API_BASE_URL}/cm/info/${encodeURIComponent(ipAddress)}`;
-  
-  try {
-    const response = await fetch(url, { 
-      signal: AbortSignal.timeout(10000) 
-    });
-    
-    const data: CmInfoResponse = await response.json();
-    
-    // Check if device was found (empty ifPhysAddress means not found)
-    if (!data.ifPhysAddress || data.error === 'SNMP Timeout.') {
-      return {
-        success: false,
-        error: {
-          code: 'DEVICE_NOT_FOUND',
-          message: data.error || 'No device found at this IP address',
-        },
-      };
-    }
-    
-    return {
-      success: true,
-      device: {
-        ipAddress,
-        macAddress: data.ifPhysAddress,
-        make: extractMakeFromDescription(data.sysDescr),
-        model: data.sysName,
-        serialNumber: data.docsDevSerialNumber,
-        docsisVersion: data.docsIfDocsisBaseCapability,
-        firmwareVersion: data.docsDevSwCurrentVers,
-        uptime: data.sysUpTime,
-      },
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: {
-        code: 'API_ERROR',
-        message: 'Failed to fetch device information',
-      },
-    };
-  }
-}
-```
-
-### Backend: API Endpoint Update (`poller-service/src/api.ts`)
-
-Add new endpoint:
-
-```typescript
-app.get('/api/devices/:ipAddress', async (req, res) => {
-  const { ipAddress } = req.params;
-  
-  // Validate IP format
-  if (!isValidIpAddress(ipAddress)) {
-    return res.status(400).json({
-      success: false,
-      error: { code: 'INVALID_IP', message: 'Invalid IP address format' },
-    });
-  }
-  
-  const result = await getDeviceInfo(ipAddress);
-  res.json(result);
-});
-```
-
-### Frontend: Device Validation Client (`src/lib/device-validation.ts`)
-
-```typescript
-const POLLER_SERVICE_URL = import.meta.env.VITE_POLLER_SERVICE_URL;
-
-export interface DeviceInfo {
-  ipAddress: string;
-  macAddress: string;
-  make: string;
-  model: string;
-  serialNumber?: string;
-  docsisVersion?: string;
-  firmwareVersion?: string;
-  uptime?: string;
-}
-
-export interface DeviceValidationResult {
-  success: boolean;
-  device?: DeviceInfo;
-  error?: { code: string; message: string };
-  source: 'api' | 'mock';
-}
-
-export async function validateDevice(ipAddress: string): Promise<DeviceValidationResult> {
-  if (POLLER_SERVICE_URL) {
-    try {
-      const response = await fetch(
-        `${POLLER_SERVICE_URL}/api/devices/${encodeURIComponent(ipAddress)}`
-      );
-      const result = await response.json();
-      return { ...result, source: 'api' };
-    } catch (error) {
-      console.warn('Device API failed, using mock');
-    }
-  }
-  
-  // Mock fallback for development
-  return mockDeviceLookup(ipAddress);
-}
-
-function mockDeviceLookup(ipAddress: string): DeviceValidationResult {
-  // Simple mock - any valid IP returns mock device
-  return {
-    success: true,
-    device: {
-      ipAddress,
-      macAddress: '00:1A:2B:3C:4D:5E',
-      make: 'Technicolor',
-      model: 'CVA4004TCH1',
-      serialNumber: 'MOCK123456',
-      docsisVersion: 'docsis31',
-    },
-    source: 'mock',
-  };
-}
-```
-
-### Frontend: Updated CreateJob Form
-
-**Key Changes to `src/pages/CreateJob.tsx`:**
-
-1. **Remove** `targetType` field from schema
-2. **Replace** `targetMac` and `targetIp` with just `targetIp` (required)
-3. **Add** new state for device validation:
-   ```typescript
-   const [deviceData, setDeviceData] = useState<DeviceInfo | null>(null);
-   const [deviceError, setDeviceError] = useState<string | null>(null);
-   const [isValidatingDevice, setIsValidatingDevice] = useState(false);
-   ```
-
-4. **Add** `handleValidateDevice` function triggered on blur:
-   ```typescript
-   async function handleValidateDevice() {
-     const ip = form.getValues('targetIp');
-     if (!ip || !isValidIpAddress(ip)) return;
-     
-     setIsValidatingDevice(true);
-     const result = await validateDevice(ip);
-     
-     if (result.success && result.device) {
-       setDeviceData(result.device);
-       // Auto-populate MAC in form (hidden)
-       form.setValue('targetMac', result.device.macAddress);
-     } else {
-       setDeviceError(result.error?.message || 'Device not found');
-     }
-     setIsValidatingDevice(false);
-   }
-   ```
-
-5. **Update** Target Configuration card UI:
-   - Single IP input with `onBlur={handleValidateDevice}`
-   - Device info display showing MAC, Make, Model
-   - Loading spinner during validation
-
----
-
-## Updated Form Schema
-
+**Before:**
 ```typescript
 const jobFormSchema = z.object({
-  accountNumber: z.string().min(9).max(12),
-  targetIp: z.string().refine(isValidIpAddress, 'Invalid IP address'),
-  targetMac: z.string().optional(), // Auto-populated from device lookup
-  durationMinutes: z.number().min(1),
-  cadenceSeconds: z.number().min(10),
-  reason: z.enum(['reactive', 'proactive']),
-  notificationEmail: z.string().email(),
-  alertOnOffline: z.boolean(),
-  alertOnRecovery: z.boolean(),
+  // ... other fields
   monitoringMode: z.enum(['simulated', 'real_polling']),
 });
 ```
 
+**After:**
+```typescript
+const jobFormSchema = z.object({
+  // ... other fields
+  // monitoringMode removed - computed from account number
+});
+```
+
+### 2. Define Test Account Constant
+
+Add a constant for the test account number:
+
+```typescript
+const TEST_ACCOUNT_NUMBER = '123456789';
+```
+
+### 3. Remove Monitoring Mode Form Field
+
+Remove the entire monitoring mode selection UI (lines 593-645 in the current file):
+- The radio button selector for Simulated vs Real Polling
+- The associated FormDescription
+
+### 4. Compute Monitoring Mode at Submission
+
+In the `onSubmit` function, determine the mode based on account number:
+
+```typescript
+async function onSubmit(data: JobFormValues) {
+  // Determine monitoring mode based on account number
+  const monitoringMode = data.accountNumber === TEST_ACCOUNT_NUMBER 
+    ? 'simulated' 
+    : 'real_polling';
+  
+  // ... rest of submission logic
+  
+  const job = await createJobMutation.mutateAsync({
+    // ... other fields
+    monitoring_mode: monitoringMode,
+  });
+  
+  // Start simulator (only runs for simulated mode)
+  startSimulator(job.id, data.cadenceSeconds, data.durationMinutes, undefined, monitoringMode);
+}
+```
+
+### 5. Update Form Default Values
+
+Remove the `monitoringMode` default value since it's no longer a form field.
+
+### 6. Add Visual Indicator (Optional Enhancement)
+
+When account `123456789` is validated, show a small badge indicating "Test Mode" so users know this will be simulated:
+
+```tsx
+{accountData && accountData.accountNumber === TEST_ACCOUNT_NUMBER && (
+  <Badge variant="outline" className="text-xs bg-yellow-50 border-yellow-300 text-yellow-700">
+    🧪 Test Account - Simulation Mode
+  </Badge>
+)}
+```
+
+### 7. Update Mock Validation
+
+Update `src/lib/mock-data.ts` to explicitly accept `123456789`:
+
+**Current validation:**
+```typescript
+if (/^[123]\d{8}$/.test(accountNumber)) {
+  // valid
+}
+```
+
+This already accepts `123456789` since it starts with `1` and has 9 digits. No change needed.
+
 ---
 
-## UI Design for Device Info Display
+## Removed UI Elements
 
-When device lookup succeeds:
+The following section will be completely removed from the form:
 
-```
-+---------------------------------------------------+
-| Target Configuration                              |
-+---------------------------------------------------+
-| Management IP Address                             |
-| [10.117.224.95                           ] [✓]    |
-|                                                   |
-| +-----------------------------------------------+ |
-| | ✓ Device Found                                | |
-| |                                               | |
-| | MAC Address:    10:A7:93:46:5A:FD             | |
-| | Make:           Technicolor                    | |
-| | Model:          CVA4004TCH1                    | |
-| | DOCSIS:         3.1                            | |
-| +-----------------------------------------------+ |
-+---------------------------------------------------+
-```
-
-When device not found:
-
-```
-+---------------------------------------------------+
-| Target Configuration                              |
-+---------------------------------------------------+
-| Management IP Address                             |
-| [10.0.0.99                               ] [⚠]   |
-|                                                   |
-| ⚠ No device found at this IP address (SNMP      |
-|   Timeout). Please verify the IP is correct.     |
-+---------------------------------------------------+
+```tsx
+<FormField
+  control={form.control}
+  name="monitoringMode"
+  render={({ field }) => (
+    <FormItem className="space-y-3">
+      <FormLabel>Monitoring Mode</FormLabel>
+      <FormControl>
+        <div className="grid grid-cols-2 gap-3">
+          {/* Simulated card */}
+          {/* Real Polling card */}
+        </div>
+      </FormControl>
+      <FormDescription>
+        Select Simulated for testing or Real Polling for production monitoring.
+      </FormDescription>
+    </FormItem>
+  )}
+/>
 ```
 
 ---
 
-## Implementation Sequence
+## Updated Audit Log
 
-1. Add device info types to `poller-service/src/types.ts`
-2. Create `poller-service/src/device.ts` with CM Info API client
-3. Add `/api/devices/:ipAddress` endpoint to `poller-service/src/api.ts`
-4. Update `poller-service/.env.example` with CM_INFO_API_BASE_URL
-5. Create `src/lib/device-validation.ts` frontend client
-6. Update `src/pages/CreateJob.tsx`:
-   - Modify form schema
-   - Add device validation state and handler
-   - Replace Target Configuration UI
-7. Update form submission to include auto-populated MAC
+The audit log will continue to capture the monitoring mode, but it will now be computed:
+
+```typescript
+await createAuditLogEntry({
+  action: 'job.create',
+  // ... other fields
+  details: {
+    // ...
+    monitoring_mode: monitoringMode, // Computed value
+  },
+});
+```
 
 ---
 
-## File Summary
+## User Experience Flow
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `poller-service/src/device.ts` | Create | CM Info API client |
-| `poller-service/src/types.ts` | Modify | Add device types |
-| `poller-service/src/api.ts` | Modify | Add device endpoint |
-| `poller-service/.env.example` | Modify | Add CM_INFO_API_BASE_URL |
-| `src/lib/device-validation.ts` | Create | Frontend device lookup |
-| `src/pages/CreateJob.tsx` | Modify | New target UI with onBlur validation |
+1. User enters account number `123456789`
+2. User clicks Validate → Shows "Account Validated" with "🧪 Test Account - Simulation Mode" badge
+3. User enters any IP address
+4. Device lookup shows mock data (already falls back to mock when real API unavailable)
+5. User submits → Job created with `monitoring_mode: 'simulated'`
+6. Browser-based simulator runs and generates mock ping data
+
+**For Real Accounts:**
+1. User enters real account number (e.g., `8160400020005238`)
+2. Validation fetches from real billing API
+3. IP lookup fetches from real SpreeDB API
+4. Job created with `monitoring_mode: 'real_polling'`
+5. OpenShift poller service handles actual ICMP pings
+
+---
+
+## Cleanup
+
+Remove unused import if no longer needed:
+- `Radio` from lucide-react (was used for the simulated mode icon)
 
