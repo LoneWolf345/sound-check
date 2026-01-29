@@ -360,17 +360,17 @@ export default function CreateJob() {
                   </div>
                   
                   <div className="text-sm space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Customer:</span>
                       <span className="font-medium">{accountData.customerName}</span>
                     </div>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Type:</span>
                       <Badge variant="secondary" className="capitalize">
                         {accountData.customerType}
                       </Badge>
                     </div>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Status:</span>
                       <Badge 
                         variant={accountData.accountStatus.toLowerCase() === 'active' ? 'default' : 'destructive'}
