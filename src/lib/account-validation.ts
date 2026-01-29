@@ -28,6 +28,7 @@ export interface AccountValidationResult {
     code: string;
     message: string;
   };
+  warning?: string;
   source: 'api' | 'mock';
 }
 
@@ -56,6 +57,8 @@ function convertMockToValidatedAccount(mock: MockBillingAccount): ValidatedAccou
  * Validate an account using the real API with fallback to mock
  */
 export async function validateAccount(accountNumber: string): Promise<AccountValidationResult> {
+  let apiError: { code: string; message: string } | null = null;
+  
   // If poller service URL is configured, try the real API first
   if (POLLER_SERVICE_URL) {
     try {
@@ -71,6 +74,23 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
         }
       );
       
+      if (!response.ok) {
+        // API responded with error status
+        if (response.status === 404) {
+          return {
+            success: false,
+            error: { code: 'ACCOUNT_NOT_FOUND', message: `Account ${accountNumber} not found` },
+            source: 'api',
+          };
+        }
+        // Other API errors
+        return {
+          success: false,
+          error: { code: 'API_ERROR', message: `Validation service returned status ${response.status}` },
+          source: 'api',
+        };
+      }
+      
       const result = await response.json();
       
       return {
@@ -78,8 +98,12 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
         source: 'api',
       };
     } catch (error) {
-      console.warn('[AccountValidation] Real API failed, falling back to mock:', error);
-      // Fall through to mock validation
+      // Network error - capture for later
+      apiError = {
+        code: 'API_UNREACHABLE',
+        message: error instanceof Error ? error.message : 'Unable to reach validation service',
+      };
+      console.warn('[AccountValidation] API unreachable:', apiError.message);
     }
   }
   
@@ -93,14 +117,18 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
       success: true,
       account: convertMockToValidatedAccount(mockResult),
       source: 'mock',
+      warning: apiError ? 'Validation service unavailable. Using test data.' : undefined,
     };
   }
   
+  // Mock didn't match - provide helpful message
   return {
     success: false,
     error: {
-      code: 'ACCOUNT_NOT_FOUND',
-      message: `Account ${accountNumber} not found`,
+      code: apiError ? 'API_UNREACHABLE' : 'ACCOUNT_NOT_FOUND',
+      message: apiError 
+        ? `Unable to reach validation service. For testing, use account 123456789.`
+        : `Account ${accountNumber} not found`,
     },
     source: 'mock',
   };

@@ -132,6 +132,14 @@ export default function CreateJob() {
         if (result.account.primaryEmail && !form.getValues('notificationEmail')) {
           form.setValue('notificationEmail', result.account.primaryEmail);
         }
+        
+        // Show non-blocking warning if API was unreachable but mock succeeded
+        if (result.warning) {
+          toast({
+            title: 'Notice',
+            description: result.warning,
+          });
+        }
       } else {
         setAccountError(result.error?.message || 'Account not found or invalid');
       }
