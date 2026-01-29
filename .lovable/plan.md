@@ -1,60 +1,150 @@
 
 
-# Tighten Account Information Display Spacing
+# Improve Account Validation Error Reporting
 
 ## Problem
-The current layout uses `flex items-center justify-between` for each row, which pushes labels (Customer, Type, Status) to the left edge and values to the right edge, creating excessive visual distance between them.
+When using a real account number in the dev environment, the poller service API cannot be reached. The current code silently falls back to mock validation, which rejects real account numbers with a misleading "Account not found" error.
+
+**Current Flow:**
+1. API call fails (network error/unreachable)
+2. Falls through to mock validation
+3. Real account number doesn't match mock pattern (`^[123]\d{8}$`)
+4. Returns "Account not found" - **misleading!**
 
 ## Solution
-Change from `justify-between` (full-width spacing) to a more compact layout where labels and values are adjacent with minimal gap.
+Add specific error codes and messages to distinguish between failure scenarios:
 
-## Changes to `src/pages/CreateJob.tsx`
+| Scenario | Error Code | User Message |
+|----------|------------|--------------|
+| Network error/timeout | `API_UNREACHABLE` | "Unable to reach validation service. Using test mode instead." |
+| API returned 404 | `ACCOUNT_NOT_FOUND` | "Account {number} not found" |
+| API returned error | `API_ERROR` | "Validation service error: {details}" |
+| Mock fallback, no match | `MOCK_NO_MATCH` | "Account not found in test data. Try test account 123456789." |
 
-### Current Layout (lines 362-381):
-```tsx
-<div className="flex items-center justify-between">
-  <span className="text-muted-foreground">Customer:</span>
-  <span className="font-medium">{accountData.customerName}</span>
-</div>
+## Changes to `src/lib/account-validation.ts`
+
+### 1. Track API failure reason
+
+Instead of silently falling through to mock, capture the specific failure:
+
+```typescript
+export async function validateAccount(accountNumber: string): Promise<AccountValidationResult> {
+  let apiError: { code: string; message: string } | null = null;
+  
+  if (POLLER_SERVICE_URL) {
+    try {
+      const response = await fetch(...);
+      
+      if (!response.ok) {
+        // API responded with error status
+        if (response.status === 404) {
+          return {
+            success: false,
+            error: { code: 'ACCOUNT_NOT_FOUND', message: `Account ${accountNumber} not found` },
+            source: 'api',
+          };
+        }
+        // Other API errors
+        return {
+          success: false,
+          error: { code: 'API_ERROR', message: `Validation service returned status ${response.status}` },
+          source: 'api',
+        };
+      }
+      
+      const result = await response.json();
+      return { ...result, source: 'api' };
+      
+    } catch (error) {
+      // Network error - capture for later
+      apiError = {
+        code: 'API_UNREACHABLE',
+        message: error instanceof Error ? error.message : 'Unable to reach validation service',
+      };
+      console.warn('[AccountValidation] API unreachable:', apiError.message);
+    }
+  }
+  
+  // Mock validation fallback
+  const mockResult = await mockValidateAccount(accountNumber);
+  
+  if (mockResult) {
+    return {
+      success: true,
+      account: convertMockToValidatedAccount(mockResult),
+      source: 'mock',
+      warning: apiError ? 'Validation service unavailable. Using test data.' : undefined,
+    };
+  }
+  
+  // Mock didn't match - provide helpful message
+  return {
+    success: false,
+    error: {
+      code: apiError ? 'API_UNREACHABLE' : 'ACCOUNT_NOT_FOUND',
+      message: apiError 
+        ? `Unable to reach validation service. For testing, use account 123456789.`
+        : `Account ${accountNumber} not found`,
+    },
+    source: 'mock',
+  };
+}
 ```
 
-### Updated Layout:
-```tsx
-<div className="flex items-center gap-2">
-  <span className="text-muted-foreground">Customer:</span>
-  <span className="font-medium">{accountData.customerName}</span>
-</div>
+### 2. Add warning field to result interface
+
+```typescript
+export interface AccountValidationResult {
+  success: boolean;
+  account?: ValidatedAccount;
+  error?: {
+    code: string;
+    message: string;
+  };
+  warning?: string;  // NEW: Non-blocking warning message
+  source: 'api' | 'mock';
+}
 ```
 
-## Specific Changes
+### 3. Update CreateJob.tsx to show warnings
 
-| Line | Change |
-|------|--------|
-| 363 | Change `justify-between` to `gap-2` |
-| 367 | Change `justify-between` to `gap-2` |
-| 373 | Change `justify-between` to `gap-2` |
+Display the warning when API was unreachable but mock succeeded:
 
-This will place the label immediately next to the value with a small 0.5rem gap instead of pushing them to opposite sides of the container.
-
-## Visual Comparison
-
-**Before:**
-```
-Customer:                                    John Customer
-Type:                                        [residential]
-Status:                                           [active]
-```
-
-**After:**
-```
-Customer: John Customer
-Type: [residential]
-Status: [active]
+```typescript
+// In handleValidateAccount:
+if (result.success && result.account) {
+  setAccountData(result.account);
+  if (result.warning) {
+    // Show non-blocking warning
+    toast({
+      title: 'Notice',
+      description: result.warning,
+      variant: 'default',
+    });
+  }
+}
 ```
 
-## File to Modify
+---
+
+## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `src/pages/CreateJob.tsx` | Update 3 flex containers from `justify-between` to `gap-2` |
+| `src/lib/account-validation.ts` | Improve error handling with specific codes and messages |
+| `src/pages/CreateJob.tsx` | Display warning toast when API unreachable but mock works |
+
+## User Experience
+
+**Scenario 1: Real account, API unreachable (dev environment)**
+- Error: "Unable to reach validation service. For testing, use account 123456789."
+- Error code: `API_UNREACHABLE`
+
+**Scenario 2: Test account 123456789, API unreachable**
+- Success with mock data
+- Toast warning: "Validation service unavailable. Using test data."
+
+**Scenario 3: Real account, API reachable, account not found**
+- Error: "Account 8160400020005238 not found"
+- Error code: `ACCOUNT_NOT_FOUND`
 
