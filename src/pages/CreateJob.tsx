@@ -67,7 +67,7 @@ type JobFormValues = z.infer<typeof jobFormSchema>;
 export default function CreateJob() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { internalUser: user } = useAuthContext();
+  const { user, profile } = useAuthContext();
   
   // Account validation state
   const [isValidating, setIsValidating] = useState(false);
@@ -114,7 +114,7 @@ export default function CreateJob() {
       durationMinutes: durationPresetsConfig.default,
       cadenceSeconds: cadencePresets.default,
       reason: 'reactive',
-      notificationEmail: user?.email ?? '',
+      notificationEmail: user?.email || '',
       alertOnOffline: true,
       alertOnRecovery: true,
     },
@@ -261,8 +261,8 @@ export default function CreateJob() {
         notification_email: data.notificationEmail,
         alert_on_offline: data.alertOnOffline,
         alert_on_recovery: data.alertOnRecovery,
-        requester_id: user.id,
-        requester_name: user.name,
+        requester_id: user!.id,
+        requester_name: profile?.display_name || user!.email || 'Unknown',
         source: 'web_app',
         monitoring_mode: monitoringMode,
       });
@@ -272,8 +272,8 @@ export default function CreateJob() {
         action: 'job.create',
         entityType: 'job',
         entityId: job.id,
-        actorId: user.id,
-        actorName: user.name,
+        actorId: user!.id,
+        actorName: profile?.display_name || user!.email || 'Unknown',
         details: {
           account_number: data.accountNumber,
           duration_minutes: data.durationMinutes,

@@ -11,10 +11,11 @@ import { useToast } from '@/hooks/use-toast';
 import { useAdminConfig, useUpdateAdminConfig } from '@/hooks/use-admin-config';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { DurationPresetEditor } from '@/components/admin/DurationPresetEditor';
+import { UserManagement } from '@/components/admin/UserManagement';
 import type { DurationPresetsConfig, CadencePresetsConfig, ThresholdsConfig, UsageLimitsConfig, WebhookConfig, DurationPreset } from '@/types';
 
 export default function AdminSettings() {
-  const { isAdmin, internalUser: user } = useAuthContext();
+  const { isAdmin, user, profile } = useAuthContext();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -84,27 +85,27 @@ export default function AdminSettings() {
         updateConfigMutation.mutateAsync({
           key: 'duration_presets',
           value: durationPresets,
-          updatedBy: user.id,
+          updatedBy: user!.id,
         }),
         updateConfigMutation.mutateAsync({
           key: 'cadence_presets',
           value: cadencePresets,
-          updatedBy: user.id,
+          updatedBy: user!.id,
         }),
         updateConfigMutation.mutateAsync({
           key: 'thresholds',
           value: thresholds,
-          updatedBy: user.id,
+          updatedBy: user!.id,
         }),
         updateConfigMutation.mutateAsync({
           key: 'usage_limits',
           value: usageLimits,
-          updatedBy: user.id,
+          updatedBy: user!.id,
         }),
         updateConfigMutation.mutateAsync({
           key: 'webhook_config',
           value: webhook,
-          updatedBy: user.id,
+          updatedBy: user!.id,
         }),
       ]);
 
@@ -112,8 +113,8 @@ export default function AdminSettings() {
       await createAuditLogEntry({
         action: 'admin.config.change',
         entityType: 'admin_config',
-        actorId: user.id,
-        actorName: user.name,
+        actorId: user!.id,
+        actorName: profile?.display_name || user!.email || 'Unknown',
         details: {
           before: config,
           after: { durationPresets, cadencePresets, thresholds, usageLimits, webhook },
@@ -149,9 +150,12 @@ export default function AdminSettings() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Admin Settings</h1>
         <p className="text-muted-foreground">
-          Configure presets, thresholds, and usage limits.
+          Configure presets, thresholds, usage limits, and manage users.
         </p>
       </div>
+
+      {/* User Management */}
+      <UserManagement />
 
       {/* Duration Presets */}
       <Card>

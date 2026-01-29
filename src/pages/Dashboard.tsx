@@ -28,12 +28,12 @@ function getStatusBadgeVariant(status: JobStatus): 'default' | 'secondary' | 'de
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { internalUser: user } = useAuthContext();
+  const { profile } = useAuthContext();
   const queryClient = useQueryClient();
   const hasCheckedExpiredJobs = useRef(false);
 
   const { data: stats, isLoading: statsLoading } = useJobStats();
-  const { data: recentJobs, isLoading: recentJobsLoading } = useRecentJobs(user?.id);
+  const { data: recentJobs, isLoading: recentJobsLoading } = useRecentJobs(profile?.id);
 
   // Check and complete any expired jobs on dashboard load
   useEffect(() => {
@@ -56,7 +56,7 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            Welcome back, {user?.name.split(' ')[0]}
+            Welcome back{profile?.display_name ? `, ${profile.display_name.split(' ')[0]}` : ''}
           </h1>
           <p className="text-muted-foreground">
             Monitor modem connectivity and track issues in real-time.
