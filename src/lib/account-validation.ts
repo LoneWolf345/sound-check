@@ -53,6 +53,16 @@ function convertMockToValidatedAccount(mock: MockBillingAccount): ValidatedAccou
   };
 }
 
+// Helper to detect test account number format
+function isTestAccountNumber(accountNumber: string): boolean {
+  return /^[123]\d{8}$/.test(accountNumber);
+}
+
+// Helper to detect real account number format
+function isRealAccountNumber(accountNumber: string): boolean {
+  return /^8160\d{12}$/.test(accountNumber);
+}
+
 /**
  * Validate an account using the real API with fallback to mock
  */
@@ -107,28 +117,46 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
     }
   }
   
-  // Fallback to mock validation
-  console.log('[AccountValidation] Using mock validation');
+  // --- API not configured or unreachable: determine behavior based on account type ---
   
-  const mockResult = await mockValidateAccount(accountNumber);
-  
-  if (mockResult) {
+  // Real account (8160...) but no API configured/reachable
+  if (isRealAccountNumber(accountNumber)) {
+    const errorMessage = POLLER_SERVICE_URL
+      ? 'Unable to reach validation service. Please try again later or use test account 123456789.'
+      : 'Real account validation is not available in this environment. Please use test account 123456789.';
+    
     return {
-      success: true,
-      account: convertMockToValidatedAccount(mockResult),
+      success: false,
+      error: {
+        code: POLLER_SERVICE_URL ? 'API_UNREACHABLE' : 'API_NOT_CONFIGURED',
+        message: errorMessage,
+      },
       source: 'mock',
-      warning: apiError ? 'Validation service unavailable. Using test data.' : undefined,
     };
   }
   
-  // Mock didn't match - provide helpful message
+  // Test account: use mock validation
+  if (isTestAccountNumber(accountNumber)) {
+    console.log('[AccountValidation] Using mock validation for test account');
+    
+    const mockResult = await mockValidateAccount(accountNumber);
+    
+    if (mockResult) {
+      return {
+        success: true,
+        account: convertMockToValidatedAccount(mockResult),
+        source: 'mock',
+        warning: apiError ? 'Validation service unavailable. Using test data.' : undefined,
+      };
+    }
+  }
+  
+  // Fallback: account format not recognized (shouldn't hit this if form validation works)
   return {
     success: false,
     error: {
-      code: apiError ? 'API_UNREACHABLE' : 'ACCOUNT_NOT_FOUND',
-      message: apiError 
-        ? `Unable to reach validation service. For testing, use account 123456789.`
-        : `Account ${accountNumber} not found`,
+      code: 'INVALID_ACCOUNT_FORMAT',
+      message: 'Account must be 16 digits starting with 8160, or use test account 123456789.',
     },
     source: 'mock',
   };
