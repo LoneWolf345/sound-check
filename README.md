@@ -1,73 +1,135 @@
-# Welcome to your Lovable project
+# Sound Check
 
-## Project info
+Network monitoring application for tracking latency and availability.
+
+## Project Info
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
-## How can I edit this code?
-
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
+## Technologies
 
 - Vite
 - TypeScript
 - React
 - shadcn-ui
 - Tailwind CSS
+- Supabase (Lovable Cloud)
 
-## How can I deploy this project?
+---
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+## Development
 
-## Can I connect a custom domain to my Lovable project?
+### Prerequisites
 
-Yes, you can!
+- Node.js & npm - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### Local Development
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+```sh
+# Clone the repository
+git clone <YOUR_GIT_URL>
+cd <YOUR_PROJECT_NAME>
+
+# Install dependencies
+npm i
+
+# Start development server
+npm run dev
+```
+
+---
+
+## Docker Deployment (OpenShift)
+
+This application is containerized for deployment on OpenShift using a multi-stage Docker build.
+
+### Architecture
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant Docker as Docker Build
+    participant Registry as Container Registry
+    participant OCP as OpenShift
+
+    Dev->>Docker: docker build --build-arg VITE_*
+    Docker->>Docker: npm ci && npm run build
+    Docker->>Docker: Copy dist to nginx
+    Docker->>Registry: docker push
+    Registry->>OCP: oc new-app / deploy
+    OCP->>OCP: Run container on port 8080
+    OCP-->>Dev: App available at route
+```
+
+### Build the Docker Image
+
+Build-time environment variables must be passed as `--build-arg` since Vite embeds them into the JavaScript bundle:
+
+```bash
+docker build \
+  --build-arg VITE_SUPABASE_URL="https://your-project.supabase.co" \
+  --build-arg VITE_SUPABASE_PUBLISHABLE_KEY="your-anon-key" \
+  --build-arg VITE_SUPABASE_PROJECT_ID="your-project-id" \
+  -t soundcheck-app:latest .
+```
+
+### Run Locally for Testing
+
+```bash
+docker run -p 8080:8080 soundcheck-app:latest
+```
+
+Then open http://localhost:8080 in your browser.
+
+### Push to Container Registry
+
+```bash
+# Tag for your registry
+docker tag soundcheck-app:latest your-registry.com/soundcheck-app:latest
+
+# Push
+docker push your-registry.com/soundcheck-app:latest
+```
+
+### Deploy to OpenShift
+
+```bash
+# Create new app from image
+oc new-app your-registry.com/soundcheck-app:latest
+
+# Expose the service as a route
+oc expose svc/soundcheck-app
+
+# Get the route URL
+oc get route soundcheck-app
+```
+
+### Environment Variables Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Yes | Supabase anon/public key |
+| `VITE_SUPABASE_PROJECT_ID` | Yes | Supabase project ID |
+
+See `.env.example` for the full template.
+
+### Technical Notes
+
+- **Port 8080**: OpenShift runs containers as non-root; port 8080 is above 1024 and doesn't require root
+- **Build-time variables**: Vite embeds `VITE_*` variables at build time, so different environments need separate image builds
+- **SPA routing**: Nginx is configured with `try_files $uri /index.html` for React Router support
+
+---
+
+## Poller Service
+
+The `poller-service/` directory contains a standalone Node.js service for real network polling. See `poller-service/README.md` for deployment instructions.
+
+---
+
+## Editing the Code
+
+- **Lovable**: Visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting
+- **Local IDE**: Clone the repo and push changes
+- **GitHub**: Edit files directly or use Codespaces
