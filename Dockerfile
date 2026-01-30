@@ -7,8 +7,8 @@ WORKDIR /opt/app-root/src
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies with cache disabled
-RUN npm ci --no-cache
+# Install all dependencies (using npm install for lock file flexibility)
+RUN npm install --no-cache
 
 # Copy source code
 COPY . .
@@ -46,7 +46,7 @@ ENV HOME=/opt/app-root/home \
 
 # Copy package files and install production dependencies only
 COPY package*.json ./
-RUN npm ci --omit=dev --no-cache
+RUN npm install --omit=dev --no-cache
 
 # Copy built assets from builder stage
 COPY --from=builder /opt/app-root/src/dist ./dist
