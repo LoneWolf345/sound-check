@@ -1,13 +1,16 @@
 # Build stage
-FROM node:22-alpine AS builder
+FROM node:20.11-alpine3.19 AS builder
 
-WORKDIR /app
+# Create app directory structure (OpenShift standard)
+WORKDIR /opt/app-root/src
 
-# Copy package files first for better layer caching
+# Copy package files
 COPY package*.json ./
-RUN npm ci
 
-# Copy source files
+# Install all dependencies with cache disabled
+RUN npm ci --no-cache
+
+# Copy source code
 COPY . .
 
 # Build-time environment variables for Vite
@@ -18,32 +21,64 @@ ARG VITE_SUPABASE_PROJECT_ID
 # Build the application
 RUN npm run build
 
-# Runtime stage - Vite Preview with proxy middleware
-FROM node:22-alpine AS runtime
+# Production stage
+FROM node:20.11-alpine3.19 AS production
 
-WORKDIR /app
+# Create OpenShift-compatible directory structure and npm cache directory
+RUN mkdir -p /opt/app-root/src \
+    /opt/app-root/home \
+    /opt/app-root/home/.npm \
+    /tmp && \
+    chmod -R 775 /opt/app-root && \
+    chmod -R 775 /opt/app-root/home/.npm && \
+    chmod -R 775 /tmp
 
-# Copy built assets and required config files
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/vite.config.ts ./
-COPY --from=builder /app/tsconfig*.json ./
+WORKDIR /opt/app-root/src
 
-# Install vite and its dependencies for preview mode
-# Note: We need vite, @vitejs/plugin-react-swc, and lovable-tagger for the config
-RUN npm ci --omit=dev && \
-    npm install vite @vitejs/plugin-react-swc lovable-tagger
+# Set environment variables including npm cache location
+ENV HOME=/opt/app-root/home \
+    NODE_ENV=production \
+    PORT=8080 \
+    NPM_CONFIG_CACHE=/opt/app-root/home/.npm \
+    POLLER_API_URL=""
 
-# Runtime env var for proxy (not VITE_ - it's server-side only)
-# Set via OpenShift ConfigMap/Secret or docker run -e
-ENV POLLER_API_URL=""
+# Copy package files and install production dependencies only
+COPY package*.json ./
+RUN npm ci --omit=dev --no-cache
 
-# Set proper permissions for OpenShift (runs as non-root)
-RUN adduser -D -u 1001 appuser && chown -R appuser:appuser /app
-USER appuser
+# Copy built assets from builder stage
+COPY --from=builder /opt/app-root/src/dist ./dist
 
-# Expose port 8080 (non-privileged port for OpenShift)
+# Copy Vite configuration (needed for preview command with proxy)
+COPY vite.config.ts ./
+
+# Install curl for healthcheck
+RUN apk --no-cache add curl
+
+# Set permissions for OpenShift arbitrary user ID support
+RUN chown -R 1002290000:0 /opt/app-root && \
+    chmod -R g=u /opt/app-root && \
+    chown -R 1002290000:0 /opt/app-root/home/.npm && \
+    chmod -R g=u /opt/app-root/home/.npm && \
+    chown -R 1002290000:0 /tmp && \
+    chmod -R g=u /tmp
+
+# Switch to unprivileged user
+USER 1002290000
+
+# OpenShift-specific labels
+LABEL io.openshift.expose-services="8080:http" \
+      io.k8s.description="Sound Check - Network Testing Dashboard" \
+      io.openshift.tags="nodejs,vite,react" \
+      io.openshift.non-scalable="false" \
+      io.k8s.display-name="sound-check"
+
+# Expose port
 EXPOSE 8080
 
-# Run Vite preview server with proxy middleware
-CMD ["npx", "vite", "preview", "--host", "0.0.0.0", "--port", "8080"]
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8080/ || exit 1
+
+# Start the application
+CMD ["npm", "run", "preview", "--", "--host", "--port", "8080"]
