@@ -24,6 +24,7 @@ interface ServiceConfig {
 const SERVICES: ServiceConfig[] = [
   { name: 'billing', envVar: 'BILLING_API_URL', pathPrefix: '' },
   { name: 'cm', envVar: 'CM_INFO_API_URL', pathPrefix: '/cm' },
+  { name: 'latency', envVar: 'LATENCY_API_URL', pathPrefix: '/latency' },
 ];
 
 function createProxyHandler(targetUrl: string, pathPrefix: string) {

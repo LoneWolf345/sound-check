@@ -1,7 +1,7 @@
 // API Service Configuration
 // Centralized routing helper for multi-service proxy architecture
 
-type ServiceName = 'billing' | 'cm';
+type ServiceName = 'billing' | 'cm' | 'latency';
 
 interface ServiceConfig {
   devEnvVar: string;
@@ -16,6 +16,10 @@ const SERVICES: Record<ServiceName, ServiceConfig> = {
   cm: {
     devEnvVar: 'VITE_CM_INFO_API_URL',
     prodPath: '/api/cm',
+  },
+  latency: {
+    devEnvVar: 'VITE_LATENCY_API_URL',
+    prodPath: '/api/latency',
   },
 };
 
