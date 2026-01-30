@@ -125,6 +125,7 @@ export default defineConfig(({ mode }) => ({
   preview: {
     host: "::",
     port: 8080,
+    allowedHosts: true, // Allow all hosts (needed for OpenShift dynamic hostnames)
   },
   plugins: [
     react(),
