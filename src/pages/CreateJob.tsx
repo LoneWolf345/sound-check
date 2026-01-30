@@ -449,7 +449,7 @@ export default function CreateJob() {
                   </div>
                   
                   {/* Warning for non-active accounts */}
-                  {accountData.accountStatus.toLowerCase() !== 'active' && (
+                  {!['active', 'normal'].includes(accountData.accountStatus.toLowerCase()) && (
                     <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 rounded p-2 mt-2">
                       <AlertTriangle className="h-4 w-4" />
                       <span>Account is not active. Monitoring may not produce expected results.</span>
