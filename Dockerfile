@@ -44,9 +44,8 @@ ENV HOME=/opt/app-root/home \
     BILLING_API_URL="" \
     CM_INFO_API_URL=""
 
-# Copy package files and install production dependencies only
-COPY package*.json ./
-RUN npm install --omit=dev --no-cache
+# Copy node_modules from builder (includes vite for preview command)
+COPY --from=builder /opt/app-root/src/node_modules ./node_modules
 
 # Copy built assets from builder stage
 COPY --from=builder /opt/app-root/src/dist ./dist
