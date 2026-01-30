@@ -65,6 +65,37 @@ function isRealAccountNumber(accountNumber: string): boolean {
 /**
  * Validate an account using the real API with fallback to mock
  */
+/**
+ * Map raw API response to ValidatedAccount format
+ */
+function mapApiResponseToAccount(data: Record<string, unknown>, accountNumber: string): ValidatedAccount {
+  const serviceAddress = data.service_address as Record<string, string> | undefined;
+  const formattedAddress = serviceAddress 
+    ? `${serviceAddress.line1 || ''}, ${serviceAddress.city || ''}, ${serviceAddress.state || ''} ${serviceAddress.zip || ''}`.trim()
+    : 'Unknown';
+
+  const emails = data.email as Array<{ email_address: string; is_primary: boolean }> | undefined;
+  const primaryEmail = emails?.find(e => e.is_primary)?.email_address || emails?.[0]?.email_address || null;
+
+  const services = data.services as { video?: boolean; hsd?: boolean; phone?: boolean } | undefined;
+
+  return {
+    accountNumber,
+    customerName: `${data.first_name || ''} ${data.last_name || ''}`.trim() || 'Unknown',
+    customerType: (data.customer_type as string)?.toUpperCase() === 'RES' ? 'residential' : 'business',
+    accountStatus: (data.account_status as string) || 'Unknown',
+    serviceAddress: formattedAddress,
+    services: {
+      video: services?.video ?? false,
+      hsd: services?.hsd ?? false,
+      phone: services?.phone ?? false,
+    },
+    nodeId: (data.node_id as string) || null,
+    primaryPhone: (data.primary_phone_number as string) || null,
+    primaryEmail,
+  };
+}
+
 export async function validateAccount(accountNumber: string): Promise<AccountValidationResult> {
   let apiError: { code: string; message: string } | null = null;
   const baseUrl = getServiceBaseUrl('billing');
@@ -101,10 +132,14 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
         };
       }
 
-      const result = await response.json();
+      const rawData = await response.json();
+
+      // Map the raw API response to our ValidatedAccount format
+      const account = mapApiResponseToAccount(rawData, accountNumber);
 
       return {
-        ...result,
+        success: true,
+        account,
         source: 'api',
       };
     } catch (error) {
