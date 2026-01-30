@@ -1,8 +1,8 @@
 // Account Validation Client
-// Calls the poller-service API with fallback to mock validation
+// Calls the Billing API with fallback to mock validation
 
 import { mockValidateAccount, type MockBillingAccount } from './mock-data';
-import { getPollerBaseUrl, isPollerApiConfigured } from './poller-api';
+import { getServiceBaseUrl, isServiceConfigured } from './api-services';
 
 export interface ValidatedAccount {
   accountNumber: string;
@@ -67,13 +67,13 @@ function isRealAccountNumber(accountNumber: string): boolean {
  */
 export async function validateAccount(accountNumber: string): Promise<AccountValidationResult> {
   let apiError: { code: string; message: string } | null = null;
-  const baseUrl = getPollerBaseUrl();
-  
-  // If poller service is configured (either via proxy in prod or env var in dev), try the real API first
+  const baseUrl = getServiceBaseUrl('billing');
+
+  // If billing service is configured, try the real API first
   if (baseUrl) {
     try {
       console.log(`[AccountValidation] Using API at ${baseUrl}/accounts/...`);
-      
+
       const response = await fetch(
         `${baseUrl}/accounts/${encodeURIComponent(accountNumber)}`,
         {
@@ -83,7 +83,7 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
           },
         }
       );
-      
+
       if (!response.ok) {
         // API responded with error status
         if (response.status === 404) {
@@ -100,9 +100,9 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
           source: 'api',
         };
       }
-      
+
       const result = await response.json();
-      
+
       return {
         ...result,
         source: 'api',
@@ -116,31 +116,31 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
       console.warn('[AccountValidation] API unreachable:', apiError.message);
     }
   }
-  
+
   // --- API not configured or unreachable: determine behavior based on account type ---
-  
+
   // Real account (8160...) but no API configured/reachable
   if (isRealAccountNumber(accountNumber)) {
-    const errorMessage = isPollerApiConfigured()
+    const errorMessage = isServiceConfigured('billing')
       ? 'Unable to reach validation service. Please try again later or use test account 123456789.'
       : 'Real account validation is not available in this environment. Please use test account 123456789.';
-    
+
     return {
       success: false,
       error: {
-        code: isPollerApiConfigured() ? 'API_UNREACHABLE' : 'API_NOT_CONFIGURED',
+        code: isServiceConfigured('billing') ? 'API_UNREACHABLE' : 'API_NOT_CONFIGURED',
         message: errorMessage,
       },
       source: 'mock',
     };
   }
-  
+
   // Test account: use mock validation
   if (isTestAccountNumber(accountNumber)) {
     console.log('[AccountValidation] Using mock validation for test account');
-    
+
     const mockResult = await mockValidateAccount(accountNumber);
-    
+
     if (mockResult) {
       return {
         success: true,
@@ -150,7 +150,7 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
       };
     }
   }
-  
+
   // Fallback: account format not recognized (shouldn't hit this if form validation works)
   return {
     success: false,
@@ -166,5 +166,5 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
  * Check if real API is available
  */
 export function isRealApiConfigured(): boolean {
-  return isPollerApiConfigured();
+  return isServiceConfigured('billing');
 }

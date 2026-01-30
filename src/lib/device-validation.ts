@@ -1,8 +1,8 @@
 // Device Validation Client
-// Fetches device information from the poller service API with mock fallback
+// Fetches device information from the CM Info API (SpreeDB) with mock fallback
 
 import { isValidIpAddress } from './format';
-import { getPollerBaseUrl, isPollerApiConfigured } from './poller-api';
+import { getServiceBaseUrl, isServiceConfigured } from './api-services';
 
 export interface DeviceInfo {
   ipAddress: string;
@@ -29,7 +29,7 @@ export interface DeviceValidationResult {
  * Check if the real device API is configured
  */
 export function isDeviceApiConfigured(): boolean {
-  return isPollerApiConfigured();
+  return isServiceConfigured('cm');
 }
 
 /**
@@ -49,13 +49,15 @@ export async function validateDevice(ipAddress: string): Promise<DeviceValidatio
     };
   }
 
-  const baseUrl = getPollerBaseUrl();
+  const baseUrl = getServiceBaseUrl('cm');
 
   // Try real API if configured
   if (baseUrl) {
     try {
+      // CM Info API path: /cm/info/{ip}
+      // With proxy: /api/cm/info/{ip} -> CM_INFO_API_URL/cm/info/{ip}
       const response = await fetch(
-        `${baseUrl}/devices/${encodeURIComponent(ipAddress)}`,
+        `${baseUrl}/info/${encodeURIComponent(ipAddress)}`,
         {
           method: 'GET',
           headers: {
@@ -63,7 +65,7 @@ export async function validateDevice(ipAddress: string): Promise<DeviceValidatio
           },
         }
       );
-      
+
       const result = await response.json();
       return { ...result, source: 'api' as const };
     } catch (error) {

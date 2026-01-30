@@ -46,7 +46,9 @@ To test the production proxy behavior locally:
 npm run build
 
 # Run preview with proxy (simulating production)
-POLLER_API_URL=http://localhost:3001 npm run preview
+BILLING_API_URL=https://acp-middleware-account-billing-system-prod.apps.prod-ocp4.corp.cableone.net \
+CM_INFO_API_URL=http://phoenix.polling.corp.cableone.net:4402 \
+npm run preview
 
 # Or without proxy (uses mock fallback)
 npm run preview
@@ -60,23 +62,36 @@ This application is containerized for deployment on OpenShift using a multi-stag
 
 ### Architecture
 
-The frontend uses a **server-side proxy** to bypass CORS restrictions when calling internal APIs:
+The frontend uses a **multi-service proxy** to bypass CORS restrictions when calling internal APIs:
 
 ```mermaid
 sequenceDiagram
     participant Browser
     participant Vite as Vite Preview<br/>(Port 8080)
-    participant Poller as Poller Service<br/>(Internal K8s)
+    participant Billing as Billing API<br/>(Internal)
+    participant CM as CM Info API<br/>(SpreeDB)
 
-    Browser->>Vite: GET /api/poller/accounts/123
+    Browser->>Vite: GET /api/billing/accounts/8160...
     Note over Browser,Vite: Same-origin request<br/>(no CORS)
     
-    Vite->>Poller: GET /api/accounts/123
-    Note over Vite,Poller: Server-to-server<br/>(CORS doesn't apply)
+    Vite->>Billing: GET /accounts/8160...
+    Note over Vite,Billing: Server-to-server<br/>(CORS doesn't apply)
     
-    Poller-->>Vite: JSON response
+    Billing-->>Vite: JSON response
+    Vite-->>Browser: JSON + CORS headers
+
+    Browser->>Vite: GET /api/cm/info/10.1.2.3
+    Vite->>CM: GET /cm/info/10.1.2.3
+    CM-->>Vite: Device info
     Vite-->>Browser: JSON + CORS headers
 ```
+
+### Proxy Routes
+
+| Frontend Path | Runtime Env Var | Target |
+|---------------|-----------------|--------|
+| `/api/billing/*` | `BILLING_API_URL` | Account validation API |
+| `/api/cm/*` | `CM_INFO_API_URL` | SpreeDB CM Info API |
 
 ### Build & Deploy Flow
 
@@ -92,7 +107,7 @@ sequenceDiagram
     Docker->>Docker: Setup Vite preview runtime
     Docker->>Registry: docker push
     Registry->>OCP: oc new-app / deploy
-    Note over OCP: Set POLLER_API_URL env var
+    Note over OCP: Set BILLING_API_URL,<br/>CM_INFO_API_URL env vars
     OCP->>OCP: Run container on port 8080
     OCP-->>Dev: App available at route
 ```
@@ -115,9 +130,10 @@ docker build \
 # Without proxy (uses mock data)
 docker run -p 8080:8080 soundcheck-app:latest
 
-# With proxy (connects to local poller service)
+# With proxy (connects to internal APIs)
 docker run -p 8080:8080 \
-  -e POLLER_API_URL="http://host.docker.internal:3001" \
+  -e BILLING_API_URL="https://acp-middleware-account-billing-system-prod.apps.prod-ocp4.corp.cableone.net" \
+  -e CM_INFO_API_URL="http://phoenix.polling.corp.cableone.net:4402" \
   soundcheck-app:latest
 ```
 
@@ -139,9 +155,10 @@ docker push your-registry.com/soundcheck-app:latest
 # Create new app from image
 oc new-app your-registry.com/soundcheck-app:latest
 
-# Set runtime environment variable for proxy
+# Set runtime environment variables for proxy
 oc set env deployment/soundcheck-app \
-  POLLER_API_URL="http://soundcheck-poller.soundcheck.svc.cluster.local:3001"
+  BILLING_API_URL="https://acp-middleware-account-billing-system-prod.apps.prod-ocp4.corp.cableone.net" \
+  CM_INFO_API_URL="http://phoenix.polling.corp.cableone.net:4402"
 
 # Expose the service as a route
 oc expose svc/soundcheck-app
@@ -157,9 +174,10 @@ oc get route soundcheck-app
 | `VITE_SUPABASE_URL` | Build-time | Yes | Supabase project URL |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Build-time | Yes | Supabase anon/public key |
 | `VITE_SUPABASE_PROJECT_ID` | Build-time | Yes | Supabase project ID |
-| `POLLER_API_URL` | Runtime | Yes* | Internal URL for poller service proxy |
+| `BILLING_API_URL` | Runtime | Yes* | Internal URL for Billing API proxy |
+| `CM_INFO_API_URL` | Runtime | Yes* | Internal URL for CM Info API proxy |
 
-*Required for real API access; without it, the proxy returns 503 and the app uses mock data.
+*Required for real API access; without them, the proxy returns 503 and the app uses mock data.
 
 See `.env.example` for the full template.
 
@@ -171,7 +189,8 @@ kind: ConfigMap
 metadata:
   name: soundcheck-config
 data:
-  POLLER_API_URL: "http://soundcheck-poller.soundcheck.svc.cluster.local:3001"
+  BILLING_API_URL: "https://acp-middleware-account-billing-system-prod.apps.prod-ocp4.corp.cableone.net"
+  CM_INFO_API_URL: "http://phoenix.polling.corp.cableone.net:4402"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -191,15 +210,9 @@ spec:
 
 - **Port 8080**: OpenShift runs containers as non-root; port 8080 is above 1024 and doesn't require root
 - **Build-time variables**: Vite embeds `VITE_*` variables at build time, so different environments need separate image builds
-- **Runtime variables**: `POLLER_API_URL` is read by the Vite preview server at startup
+- **Runtime variables**: `BILLING_API_URL` and `CM_INFO_API_URL` are read by the Vite preview server at startup
 - **SPA routing**: Vite preview handles client-side routing automatically
-- **Proxy middleware**: `/api/poller/*` requests are forwarded server-side to `POLLER_API_URL/api/*`
-
----
-
-## Poller Service
-
-The `poller-service/` directory contains a standalone Node.js service for real network polling. See `poller-service/README.md` for deployment instructions.
+- **Multi-service proxy**: `/api/{service}/*` requests are forwarded server-side to their respective internal APIs
 
 ---
 
