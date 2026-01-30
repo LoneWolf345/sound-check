@@ -44,6 +44,9 @@ ENV HOME=/opt/app-root/home \
     BILLING_API_URL="" \
     CM_INFO_API_URL=""
 
+# Copy package.json (needed for npm run preview)
+COPY --from=builder /opt/app-root/src/package.json ./
+
 # Copy node_modules from builder (includes vite for preview command)
 COPY --from=builder /opt/app-root/src/node_modules ./node_modules
 
