@@ -66,8 +66,39 @@ export async function validateDevice(ipAddress: string): Promise<DeviceValidatio
         }
       );
 
-      const result = await response.json();
-      return { ...result, source: 'api' as const };
+      const data = await response.json();
+      
+      // Check for API-level errors
+      if (data.error && data.error.length > 0) {
+        return {
+          success: false,
+          error: {
+            code: 'DEVICE_ERROR',
+            message: data.error,
+          },
+          source: 'api',
+        };
+      }
+      
+      // Check if we got a valid response (has MAC address)
+      if (!data.ifPhysAddress) {
+        return {
+          success: false,
+          error: {
+            code: 'DEVICE_NOT_FOUND',
+            message: 'No device found at this IP address.',
+          },
+          source: 'api',
+        };
+      }
+      
+      // Parse device info from API response
+      const device = parseApiResponse(data, ipAddress);
+      return {
+        success: true,
+        device,
+        source: 'api',
+      };
     } catch (error) {
       console.warn('[DeviceValidation] Real API failed, falling back to mock:', error);
     }
@@ -75,6 +106,50 @@ export async function validateDevice(ipAddress: string): Promise<DeviceValidatio
 
   // Mock fallback for development
   return mockDeviceLookup(ipAddress);
+}
+
+/**
+ * Parse the CM Info API response into our DeviceInfo format
+ */
+function parseApiResponse(data: Record<string, string>, ipAddress: string): DeviceInfo {
+  // Extract make/model from sysDescr
+  // Format: "Technicolor CVA4004TCH1 DOCSIS 3.1 Cable Modem <<HW_REV: ...; VENDOR: Technicolor; ...>>"
+  let make = 'Unknown';
+  let model = data.sysName || 'Unknown';
+  
+  if (data.sysDescr) {
+    // Try to extract vendor from the <<...VENDOR: xxx;...>> section
+    const vendorMatch = data.sysDescr.match(/VENDOR:\s*([^;>]+)/i);
+    if (vendorMatch) {
+      make = vendorMatch[1].trim();
+    } else {
+      // Fallback: first word is usually the vendor
+      const firstWord = data.sysDescr.split(' ')[0];
+      if (firstWord) {
+        make = firstWord;
+      }
+    }
+  }
+  
+  // Parse DOCSIS version (e.g., "docsis31" -> "3.1")
+  let docsisVersion: string | undefined;
+  if (data.docsIfDocsisBaseCapability) {
+    const match = data.docsIfDocsisBaseCapability.match(/docsis(\d)(\d)?/i);
+    if (match) {
+      docsisVersion = match[2] ? `${match[1]}.${match[2]}` : match[1];
+    }
+  }
+  
+  return {
+    ipAddress,
+    macAddress: data.ifPhysAddress || '',
+    make,
+    model,
+    serialNumber: data.docsDevSerialNumber,
+    docsisVersion,
+    firmwareVersion: data.docsDevSwCurrentVers,
+    uptime: data.sysUpTime,
+  };
 }
 
 /**
