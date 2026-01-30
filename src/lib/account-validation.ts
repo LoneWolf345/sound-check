@@ -2,8 +2,7 @@
 // Calls the poller-service API with fallback to mock validation
 
 import { mockValidateAccount, type MockBillingAccount } from './mock-data';
-
-const POLLER_SERVICE_URL = import.meta.env.VITE_POLLER_SERVICE_URL;
+import { getPollerBaseUrl, isPollerApiConfigured } from './poller-api';
 
 export interface ValidatedAccount {
   accountNumber: string;
@@ -68,14 +67,15 @@ function isRealAccountNumber(accountNumber: string): boolean {
  */
 export async function validateAccount(accountNumber: string): Promise<AccountValidationResult> {
   let apiError: { code: string; message: string } | null = null;
+  const baseUrl = getPollerBaseUrl();
   
-  // If poller service URL is configured, try the real API first
-  if (POLLER_SERVICE_URL) {
+  // If poller service is configured (either via proxy in prod or env var in dev), try the real API first
+  if (baseUrl) {
     try {
-      console.log(`[AccountValidation] Using real API at ${POLLER_SERVICE_URL}`);
+      console.log(`[AccountValidation] Using API at ${baseUrl}/accounts/...`);
       
       const response = await fetch(
-        `${POLLER_SERVICE_URL}/api/accounts/${encodeURIComponent(accountNumber)}`,
+        `${baseUrl}/accounts/${encodeURIComponent(accountNumber)}`,
         {
           method: 'GET',
           headers: {
@@ -121,14 +121,14 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
   
   // Real account (8160...) but no API configured/reachable
   if (isRealAccountNumber(accountNumber)) {
-    const errorMessage = POLLER_SERVICE_URL
+    const errorMessage = isPollerApiConfigured()
       ? 'Unable to reach validation service. Please try again later or use test account 123456789.'
       : 'Real account validation is not available in this environment. Please use test account 123456789.';
     
     return {
       success: false,
       error: {
-        code: POLLER_SERVICE_URL ? 'API_UNREACHABLE' : 'API_NOT_CONFIGURED',
+        code: isPollerApiConfigured() ? 'API_UNREACHABLE' : 'API_NOT_CONFIGURED',
         message: errorMessage,
       },
       source: 'mock',
@@ -166,5 +166,5 @@ export async function validateAccount(accountNumber: string): Promise<AccountVal
  * Check if real API is available
  */
 export function isRealApiConfigured(): boolean {
-  return Boolean(POLLER_SERVICE_URL);
+  return isPollerApiConfigured();
 }
