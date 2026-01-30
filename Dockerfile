@@ -36,11 +36,13 @@ RUN mkdir -p /opt/app-root/src \
 WORKDIR /opt/app-root/src
 
 # Set environment variables including npm cache location
+# Runtime environment variables for multi-service proxy
 ENV HOME=/opt/app-root/home \
     NODE_ENV=production \
     PORT=8080 \
     NPM_CONFIG_CACHE=/opt/app-root/home/.npm \
-    POLLER_API_URL=""
+    BILLING_API_URL="" \
+    CM_INFO_API_URL=""
 
 # Copy package files and install production dependencies only
 COPY package*.json ./
