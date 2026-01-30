@@ -2,8 +2,7 @@
 // Fetches device information from the poller service API with mock fallback
 
 import { isValidIpAddress } from './format';
-
-const POLLER_SERVICE_URL = import.meta.env.VITE_POLLER_SERVICE_URL;
+import { getPollerBaseUrl, isPollerApiConfigured } from './poller-api';
 
 export interface DeviceInfo {
   ipAddress: string;
@@ -30,7 +29,7 @@ export interface DeviceValidationResult {
  * Check if the real device API is configured
  */
 export function isDeviceApiConfigured(): boolean {
-  return !!POLLER_SERVICE_URL;
+  return isPollerApiConfigured();
 }
 
 /**
@@ -50,11 +49,13 @@ export async function validateDevice(ipAddress: string): Promise<DeviceValidatio
     };
   }
 
+  const baseUrl = getPollerBaseUrl();
+
   // Try real API if configured
-  if (POLLER_SERVICE_URL) {
+  if (baseUrl) {
     try {
       const response = await fetch(
-        `${POLLER_SERVICE_URL}/api/devices/${encodeURIComponent(ipAddress)}`,
+        `${baseUrl}/devices/${encodeURIComponent(ipAddress)}`,
         {
           method: 'GET',
           headers: {

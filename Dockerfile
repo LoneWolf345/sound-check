@@ -18,25 +18,32 @@ ARG VITE_SUPABASE_PROJECT_ID
 # Build the application
 RUN npm run build
 
-# Runtime stage
-FROM nginx:alpine
+# Runtime stage - Vite Preview with proxy middleware
+FROM node:22-alpine AS runtime
 
-# Copy built assets from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
+WORKDIR /app
 
-# Copy custom nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Copy built assets and required config files
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/vite.config.ts ./
+COPY --from=builder /app/tsconfig*.json ./
+
+# Install vite and its dependencies for preview mode
+# Note: We need vite, @vitejs/plugin-react-swc, and lovable-tagger for the config
+RUN npm ci --omit=dev && \
+    npm install vite @vitejs/plugin-react-swc lovable-tagger
+
+# Runtime env var for proxy (not VITE_ - it's server-side only)
+# Set via OpenShift ConfigMap/Secret or docker run -e
+ENV POLLER_API_URL=""
 
 # Set proper permissions for OpenShift (runs as non-root)
-RUN chown -R nginx:nginx /usr/share/nginx/html && \
-    chmod -R 755 /usr/share/nginx/html && \
-    chown -R nginx:nginx /var/cache/nginx && \
-    chown -R nginx:nginx /var/log/nginx && \
-    touch /var/run/nginx.pid && \
-    chown -R nginx:nginx /var/run/nginx.pid
+RUN adduser -D -u 1001 appuser && chown -R appuser:appuser /app
+USER appuser
 
 # Expose port 8080 (non-privileged port for OpenShift)
 EXPOSE 8080
 
-# Run nginx in foreground
-CMD ["nginx", "-g", "daemon off;"]
+# Run Vite preview server with proxy middleware
+CMD ["npx", "vite", "preview", "--host", "0.0.0.0", "--port", "8080"]
