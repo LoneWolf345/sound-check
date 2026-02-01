@@ -389,3 +389,65 @@ export async function checkAndHandleJob(jobId: string): Promise<'completed' | 'r
   resumeSimulatorForJob(job, lastSequence + 1);
   return 'resumed';
 }
+
+// Force start the browser simulator for any job, regardless of monitoring mode
+// Used as a fallback when external poller is unavailable
+export async function forceStartSimulator(
+  jobId: string,
+  cadenceSeconds: number,
+  durationMinutes: number,
+  startedAt: string
+): Promise<boolean> {
+  // Don't start if already running
+  if (activeSimulators.has(jobId)) {
+    console.log(`Simulator already running for job ${jobId}`);
+    return false;
+  }
+
+  // Calculate remaining duration
+  const startTime = new Date(startedAt).getTime();
+  const elapsedMinutes = (Date.now() - startTime) / 60000;
+  const remainingMinutes = Math.max(0, durationMinutes - elapsedMinutes);
+
+  if (remainingMinutes <= 0) {
+    console.log(`Job ${jobId} has no remaining time`);
+    return false;
+  }
+
+  // Get the last sequence number to continue from
+  const { data: existingSamples } = await supabase
+    .from('samples')
+    .select('sequence_number')
+    .eq('job_id', jobId)
+    .order('sequence_number', { ascending: false })
+    .limit(1);
+
+  const lastSequence = existingSamples?.[0]?.sequence_number ?? -1;
+  let sampleIndex = lastSequence + 1;
+
+  const scenario = pickRandomScenario();
+  const endTime = startTime + durationMinutes * 60 * 1000;
+
+  console.log(`Force starting simulator for job ${jobId} with scenario: ${scenario}, starting at sequence ${sampleIndex}, remaining: ${remainingMinutes.toFixed(1)} minutes`);
+
+  // Insert first sample immediately
+  insertSample(jobId, sampleIndex++, scenario);
+
+  // Set up interval for subsequent samples
+  const intervalId = setInterval(async () => {
+    const now = Date.now();
+
+    // Check if job should complete
+    if (now >= endTime) {
+      stopSimulator(jobId);
+      await completeJob(jobId);
+      return;
+    }
+
+    // Insert next sample
+    await insertSample(jobId, sampleIndex++, scenario);
+  }, cadenceSeconds * 1000);
+
+  activeSimulators.set(jobId, intervalId);
+  return true;
+}
