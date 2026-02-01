@@ -158,13 +158,24 @@ async function completeJob(jobId: string) {
   try {
     const jobDetailUrl = `${window.location.origin}/jobs/${jobId}`;
     
-    // Get current user session for authenticated API call
-    const { data: { session } } = await supabase.auth.getSession();
+    // Wait for session with retry logic (session may not be ready on page load)
+    let session = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.access_token) {
+        session = data.session;
+        break;
+      }
+      console.log(`Session not ready, attempt ${attempt + 1}/3...`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
     
     if (!session?.access_token) {
-      console.warn('No authenticated session - completion email will not be sent');
+      console.warn('No authenticated session after retries - completion email will not be sent');
       return;
     }
+    
+    console.log(`Attempting to send completion email for job ${jobId}...`);
     
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-completion-email`, {
       method: 'POST',
@@ -175,6 +186,8 @@ async function completeJob(jobId: string) {
       body: JSON.stringify({ jobId, jobDetailUrl }),
     });
 
+    console.log(`Email API response status: ${response.status}`);
+    
     const result = await response.json();
     
     if (result.success) {
@@ -245,8 +258,8 @@ export async function checkAndCompleteExpiredJobs(): Promise<{ completed: string
       await completeJob(job.id);
       completed.push(job.id);
       console.log(`Auto-completed expired job ${job.id}`);
-    } else if (!isSimulatorRunning(job.id)) {
-      // Job still has time but simulator isn't running - resume it
+    } else if (!isSimulatorRunning(job.id) && job.monitoring_mode !== 'real_polling') {
+      // Job still has time but simulator isn't running - resume it (only for simulated jobs)
       const { data: existingSamples } = await supabase
         .from('samples')
         .select('sequence_number')
@@ -266,9 +279,15 @@ export async function checkAndCompleteExpiredJobs(): Promise<{ completed: string
 
 // Resume simulator for a specific job that hasn't expired yet
 export function resumeSimulatorForJob(
-  job: { id: string; started_at: string; duration_minutes: number; cadence_seconds: number },
+  job: { id: string; started_at: string; duration_minutes: number; cadence_seconds: number; monitoring_mode?: string },
   startSequence: number
 ) {
+  // Skip for real_polling jobs - they're handled by the external poller
+  if (job.monitoring_mode === 'real_polling') {
+    console.log(`Skipping simulator resume for real_polling job ${job.id}`);
+    return;
+  }
+  
   // Don't start if already running
   if (activeSimulators.has(job.id)) {
     return;
@@ -336,7 +355,13 @@ export async function checkAndHandleJob(jobId: string): Promise<'completed' | 'r
     return 'already_running';
   }
 
-  // Resume the simulator
+  // Skip simulator resume for real_polling jobs
+  if (job.monitoring_mode === 'real_polling') {
+    console.log(`Skipping simulator resume for real_polling job ${job.id}`);
+    return 'already_running'; // Not exactly running, but we don't want to resume
+  }
+
+  // Resume the simulator (only for simulated jobs)
   const { data: existingSamples } = await supabase
     .from('samples')
     .select('sequence_number')
