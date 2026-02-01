@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, XCircle, Loader2, Mail, Copy } from 'lucide-react';
+import { ArrowLeft, XCircle, Loader2, Mail, Copy, AlertTriangle, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -38,8 +38,9 @@ import { useJobAlerts } from '@/hooks/use-alerts';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { stopSimulator, checkAndHandleJob } from '@/lib/ping-simulator';
+import { stopSimulator, checkAndHandleJob, forceStartSimulator, isSimulatorRunning } from '@/lib/ping-simulator';
 import { supabase } from '@/integrations/supabase/client';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useQueryClient } from '@tanstack/react-query';
 
 // Extracted components
@@ -81,6 +82,45 @@ export default function JobDetail() {
   const { data: samples = [] } = useJobSamples(id);
   const { data: alerts = [] } = useJobAlerts(id);
   const cancelJobMutation = useCancelJob();
+  const [usingFallbackSimulator, setUsingFallbackSimulator] = useState(false);
+
+  // Detect if real_polling job appears stuck (no samples after 2x cadence)
+  const isPollerStale = useMemo(() => {
+    if (!job || job.status !== 'running') return false;
+    if (job.monitoring_mode !== 'real_polling') return false;
+    if (samples.length > 0) return false;
+    if (usingFallbackSimulator) return false;
+    if (isSimulatorRunning(job.id)) return false;
+    
+    const staleDuration = job.cadence_seconds * 2 * 1000; // 2x cadence
+    const timeSinceStart = Date.now() - new Date(job.started_at).getTime();
+    return timeSinceStart > staleDuration;
+  }, [job, samples, usingFallbackSimulator]);
+
+  async function handleStartFallbackSimulator() {
+    if (!job) return;
+    
+    const started = await forceStartSimulator(
+      job.id,
+      job.cadence_seconds,
+      job.duration_minutes,
+      job.started_at
+    );
+    
+    if (started) {
+      setUsingFallbackSimulator(true);
+      toast({
+        title: 'Fallback Simulator Started',
+        description: 'Using browser-based simulated data since the external poller is unavailable.',
+      });
+    } else {
+      toast({
+        title: 'Could Not Start Simulator',
+        description: 'The simulator may already be running or the job has expired.',
+        variant: 'destructive',
+      });
+    }
+  }
 
   // Check and handle job state on load (auto-complete if expired, resume if still running)
   useEffect(() => {
@@ -374,6 +414,41 @@ View full details: ${window.location.href}
         </div>
       </div>
 
+      {/* Poller Stale Warning */}
+      {isPollerStale && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>No Samples Detected</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <span>
+              This job uses real polling mode but no samples have been received.
+              The external poller service may not be running or may have lost connectivity.
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-fit gap-2"
+              onClick={handleStartFallbackSimulator}
+            >
+              <Play className="h-4 w-4" />
+              Use Simulated Data Instead
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Fallback Simulator Active Notice */}
+      {usingFallbackSimulator && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Using Simulated Data</AlertTitle>
+          <AlertDescription>
+            The browser-based simulator is generating sample data because the external poller is unavailable.
+            This data is for testing purposes only.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Progress (for running jobs) */}
       {job.status === 'running' && (
         <Card>
@@ -484,6 +559,14 @@ View full details: ${window.location.href}
               <div>
                 <dt className="font-medium text-muted-foreground">Source</dt>
                 <dd>{job.source === 'tempo' ? 'TeMPO API' : 'Web App'}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Monitoring Mode</dt>
+                <dd className="capitalize">{job.monitoring_mode === 'real_polling' ? 'Real Polling' : 'Simulated'}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Last Ping</dt>
+                <dd>{job.last_ping_at ? formatDateTime(job.last_ping_at) : 'Never'}</dd>
               </div>
               <div>
                 <dt className="font-medium text-muted-foreground">Alerts</dt>
