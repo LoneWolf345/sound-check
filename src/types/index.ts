@@ -29,6 +29,9 @@ export interface Job {
   cancelled_at: string | null;
   last_ping_at: string | null;
   created_at: string;
+  avg_rtt_ms: number | null;
+  packet_loss_percent: number | null;
+  total_samples: number;
 }
 
 export interface Sample {

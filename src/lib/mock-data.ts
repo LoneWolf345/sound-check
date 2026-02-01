@@ -137,6 +137,9 @@ export function generateMockJob(
     cancelled_at: null,
     last_ping_at: null,
     created_at: now.toISOString(),
+    avg_rtt_ms: null,
+    packet_loss_percent: null,
+    total_samples: 0,
     ...overrides,
   };
 }
