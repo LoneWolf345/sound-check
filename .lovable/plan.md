@@ -1,134 +1,177 @@
 
-# Plan: Fix Completion Emails for Real Polling Jobs
+# Plan: Allow Anonymous Dashboard Access with Optional Login
 
-## Problem Summary
+## Overview
 
-Completion emails are **not being sent** for any jobs (both `simulated` and `real_polling` modes). Investigation revealed:
-
-1. **No email records exist** - The `alerts` table has 0 `completion_email` entries for all completed jobs
-2. **Edge function never invoked** - No logs exist for `send-completion-email` function
-3. **Multiple issues in the auto-completion flow** cause emails to be skipped
-
-## Root Cause Analysis
-
-### Issue 1: Session May Not Exist When Auto-Completing
-
-In `completeJob()` (ping-simulator.ts lines 162-167):
-```typescript
-const { data: { session } } = await supabase.auth.getSession();
-
-if (!session?.access_token) {
-  console.warn('No authenticated session - completion email will not be sent');
-  return;  // ← Silent exit, no email sent
-}
-```
-
-When a job auto-completes via `checkAndCompleteExpiredJobs()` on page load, the auth session might not be fully initialized yet, causing this check to fail silently.
-
-### Issue 2: Simulator Resume Logic Ignores Monitoring Mode
-
-In `checkAndCompleteExpiredJobs()` (line 258):
-```typescript
-resumeSimulatorForJob(job, lastSequence + 1);
-```
-
-This attempts to resume the simulator for ALL running jobs, including `real_polling` jobs. For `real_polling` jobs, this creates **duplicate simulated samples** alongside the real samples from the external poller (which explains the initial "5 missed pings" - they might be from this).
-
-### Issue 3: No Retry or Fallback for Email Delivery
-
-If the email API call fails for any reason, there's no retry mechanism or queue - the email is simply lost.
+Make the dashboard and job pages publicly accessible without requiring login. Authenticated users will have additional capabilities (create/manage jobs), while anonymous users can view all data. Add a "Sign In" button in the top-right corner for users who want to log in.
 
 ---
 
-## Solution Overview
+## Current State
 
-Fix the auto-completion flow to properly handle `real_polling` jobs and ensure emails are sent reliably.
+- All routes except `/login`, `/register`, and `/sso/callback` are wrapped in `ProtectedRoute`
+- `ProtectedRoute` redirects unauthenticated users to `/login`
+- `AppLayout` assumes user is logged in and shows user menu with sign out
+- RLS policies already allow SELECT for all users (authenticated or not)
 
 ---
 
 ## Implementation Steps
 
-### Step 1: Add Monitoring Mode Check to Resume Logic
+### Step 1: Remove ProtectedRoute from Public Pages
 
-Prevent simulator resume attempts for `real_polling` jobs in both `checkAndCompleteExpiredJobs()` and `checkAndHandleJob()`:
+Update `App.tsx` to remove `ProtectedRoute` wrapper from dashboard, jobs, and job detail pages. Keep `ProtectedRoute` only for admin routes.
 
-```typescript
-// In checkAndCompleteExpiredJobs():
-} else if (!isSimulatorRunning(job.id) && job.monitoring_mode !== 'real_polling') {
-  // Only resume simulator for simulated jobs
-  resumeSimulatorForJob(job, lastSequence + 1);
-  resumed.push(job.id);
-}
+**Routes to make public:**
+- `/` (Dashboard)
+- `/jobs` (Job List)
+- `/jobs/:id` (Job Detail)
+- `/jobs/new` (Create Job) - will need auth check in component
+
+**Routes to keep protected:**
+- `/admin` (Admin Settings - requires admin)
+- `/audit` (Audit Log - requires admin)
+
+### Step 2: Update AppLayout for Anonymous Users
+
+Modify `AppLayout.tsx` to handle both authenticated and anonymous states:
+
+**When logged in:**
+- Show user dropdown with name and sign out option (current behavior)
+
+**When NOT logged in:**
+- Show "Sign In" button that navigates to `/login`
+
+### Step 3: Update Dashboard for Anonymous Access
+
+Modify `Dashboard.tsx` to:
+- Show generic welcome message when not logged in ("Welcome to Sound Check")
+- Use `useRecentJobs` without userId for anonymous users (show recent jobs from all users, or skip section)
+- Keep all stats and navigation working
+
+### Step 4: Protect Job Creation at Component Level
+
+Update `CreateJob.tsx` to check authentication:
+- If user is not logged in, show a message prompting them to sign in
+- Redirect to login or show inline auth prompt
+
+---
+
+## Technical Details
+
+### File: `src/App.tsx`
+
+Remove `ProtectedRoute` wrapper from public routes:
+
+```tsx
+{/* Public routes - accessible without login */}
+<Route path="/login" element={<Login />} />
+<Route path="/register" element={<Register />} />
+<Route path="/sso/callback" element={<SSOCallback />} />
+
+{/* Main app routes - public viewing, some actions require auth */}
+<Route
+  path="/"
+  element={
+    <AppLayout>
+      <Dashboard />
+    </AppLayout>
+  }
+/>
+<Route
+  path="/jobs"
+  element={
+    <AppLayout>
+      <JobList />
+    </AppLayout>
+  }
+/>
+<Route
+  path="/jobs/:id"
+  element={
+    <AppLayout>
+      <JobDetail />
+    </AppLayout>
+  }
+/>
+<Route
+  path="/jobs/new"
+  element={
+    <AppLayout>
+      <CreateJob />
+    </AppLayout>
+  }
+/>
+
+{/* Admin routes - require authentication + admin role */}
+<Route
+  path="/admin"
+  element={
+    <ProtectedRoute requireAdmin>
+      <AppLayout>
+        <AdminSettings />
+      </AppLayout>
+    </ProtectedRoute>
+  }
+/>
 ```
 
-### Step 2: Ensure Session Exists Before Sending Email
+### File: `src/components/layout/AppLayout.tsx`
 
-Add session wait/retry logic or use a more reliable approach:
+Update user menu section:
 
-```typescript
-async function completeJob(jobId: string) {
-  // Update job status first
-  const { error } = await supabase
-    .from('jobs')
-    .update({ status: 'completed', completed_at: new Date().toISOString() })
-    .eq('id', jobId);
-
-  if (error) {
-    console.error('Failed to complete job:', error);
-    return;
-  }
-
-  // Wait briefly for session to be available if needed
-  let session = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.access_token) {
-      session = data.session;
-      break;
-    }
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-
-  if (!session?.access_token) {
-    console.warn('No authenticated session after retries - completion email will not be sent');
-    return;
-  }
-
-  // Proceed with email...
-}
+```tsx
+{/* User Menu / Sign In Button */}
+{user ? (
+  <DropdownMenu>
+    {/* ... existing dropdown content ... */}
+  </DropdownMenu>
+) : (
+  <Button variant="outline" onClick={() => navigate('/login')} className="gap-2">
+    <LogIn className="h-4 w-4" />
+    <span className="hidden sm:inline">Sign In</span>
+  </Button>
+)}
 ```
 
-### Step 3: Add Console Logging for Email Attempts
+### File: `src/pages/Dashboard.tsx`
 
-Add more detailed logging to trace email delivery issues:
+Update welcome message and recent jobs:
 
-```typescript
-console.log(`Attempting to send completion email for job ${jobId}...`);
-const response = await fetch(...);
-console.log(`Email API response status: ${response.status}`);
+```tsx
+<h1 className="text-2xl font-bold tracking-tight">
+  {profile?.display_name 
+    ? `Welcome back, ${profile.display_name.split(' ')[0]}`
+    : 'Sound Check Dashboard'}
+</h1>
+
+{/* Recent Jobs section - show for logged-in users only, or show all recent */}
+const { data: recentJobs, isLoading: recentJobsLoading } = useRecentJobs(profile?.id);
 ```
 
-### Step 4: Update Job Type to Include monitoring_mode
+### File: `src/pages/CreateJob.tsx`
 
-Ensure the `resumeSimulatorForJob` function signature and callers pass `monitoring_mode`:
+Add authentication check at the top:
 
-```typescript
-export function resumeSimulatorForJob(
-  job: { 
-    id: string; 
-    started_at: string; 
-    duration_minutes: number; 
-    cadence_seconds: number;
-    monitoring_mode?: string;  // Add this
-  },
-  startSequence: number
-) {
-  // Skip for real_polling jobs
-  if (job.monitoring_mode === 'real_polling') {
-    console.log(`Skipping simulator resume for real_polling job ${job.id}`);
-    return;
-  }
-  // ... rest of function
+```tsx
+const { user, isLoading } = useAuthContext();
+
+if (!isLoading && !user) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sign in Required</CardTitle>
+        <CardDescription>
+          You need to be signed in to create a monitoring job.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button onClick={() => navigate('/login', { state: { from: location } })}>
+          Sign In to Continue
+        </Button>
+      </CardContent>
+    </Card>
+  );
 }
 ```
 
@@ -138,23 +181,26 @@ export function resumeSimulatorForJob(
 
 | File | Changes |
 |------|---------|
-| `src/lib/ping-simulator.ts` | Add monitoring_mode checks to prevent duplicate samples; add session retry logic; improve logging |
+| `src/App.tsx` | Remove ProtectedRoute from public pages |
+| `src/components/layout/AppLayout.tsx` | Add Sign In button for anonymous users |
+| `src/pages/Dashboard.tsx` | Update welcome message for anonymous users |
+| `src/pages/CreateJob.tsx` | Add auth check to prevent anonymous job creation |
+
+---
+
+## Security Considerations
+
+- RLS policies already allow SELECT for all users - no database changes needed
+- INSERT/UPDATE on jobs still requires `auth.uid()` match, so anonymous users cannot create/modify jobs
+- Admin routes remain fully protected
 
 ---
 
 ## Expected Outcome
 
 After implementation:
-- Completion emails will be sent reliably when jobs complete
-- `real_polling` jobs will not have simulator resume attempts (no duplicate/simulated samples)
-- Better logging will help debug any future email issues
-
----
-
-## Testing Verification
-
-1. Start a short-duration (1-2 minute) `real_polling` job
-2. Wait for it to complete naturally
-3. Verify the completion email is received
-4. Check console logs for email delivery confirmation
-5. Verify no duplicate samples are created
+- Visiting the app URL shows the dashboard immediately (no redirect to login)
+- Anonymous users can browse all jobs and view job details
+- "Sign In" button appears in top-right corner for anonymous users
+- Clicking "New Job" when not logged in shows a sign-in prompt
+- Admin pages still require authentication and admin role
