@@ -36,6 +36,7 @@ export interface Sample {
   job_id: string;
   status: SampleStatus;
   rtt_ms: number | null;
+  jitter_ms: number | null;
   recorded_at: string;
   sequence_number: number;
 }
@@ -96,6 +97,7 @@ export interface CadencePresetsConfig {
 export interface ThresholdsConfig {
   packet_loss_percent: number;
   p95_latency_ms: number;
+  jitter_ms: number;
   system_error_percent: number;
 }
 
@@ -119,11 +121,14 @@ export interface JobSummary {
   avgRttMs: number | null;
   maxRttMs: number | null;
   p95RttMs: number | null;
+  avgJitterMs: number | null;
+  maxJitterMs: number | null;
   successRate: number;
   outageEventCount: number;
   longestMissStreak: number;
   passPacketLoss: boolean;
   passLatency: boolean;
+  passJitter: boolean;
   overallPass: boolean;
 }
 

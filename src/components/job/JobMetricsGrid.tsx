@@ -1,4 +1,4 @@
-import { Clock, Activity, AlertTriangle, XCircle } from 'lucide-react';
+import { Clock, Activity, AlertTriangle, XCircle, Zap } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatPercent, formatMs } from '@/lib/format';
@@ -51,7 +51,7 @@ interface JobMetricsGridProps {
 export function JobMetricsGrid({ summary }: JobMetricsGridProps) {
   return (
     <>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <MetricTile
           label="Packet Loss"
           value={formatPercent(summary.packetLossPercent)}
@@ -63,6 +63,12 @@ export function JobMetricsGrid({ summary }: JobMetricsGridProps) {
           value={formatMs(summary.p95RttMs)}
           subValue="Threshold: ≤100ms"
           pass={summary.passLatency}
+        />
+        <MetricTile
+          label="Avg Jitter"
+          value={formatMs(summary.avgJitterMs)}
+          subValue="Threshold: ≤30ms"
+          pass={summary.passJitter}
         />
         <MetricTile
           label="Avg RTT"
@@ -78,7 +84,12 @@ export function JobMetricsGrid({ summary }: JobMetricsGridProps) {
         />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
+        <MetricTile
+          label="Max Jitter"
+          value={formatMs(summary.maxJitterMs)}
+          icon={Zap}
+        />
         <MetricTile
           label="Outage Events"
           value={summary.outageEventCount.toString()}

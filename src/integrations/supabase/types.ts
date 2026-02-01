@@ -202,6 +202,7 @@ export type Database = {
       samples: {
         Row: {
           id: string
+          jitter_ms: number | null
           job_id: string
           recorded_at: string
           rtt_ms: number | null
@@ -210,6 +211,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          jitter_ms?: number | null
           job_id: string
           recorded_at?: string
           rtt_ms?: number | null
@@ -218,6 +220,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          jitter_ms?: number | null
           job_id?: string
           recorded_at?: string
           rtt_ms?: number | null
