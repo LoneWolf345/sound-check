@@ -112,6 +112,7 @@ export type Database = {
           alert_on_offline: boolean
           alert_on_recovery: boolean
           alert_state: Database["public"]["Enums"]["alert_state"]
+          avg_rtt_ms: number | null
           cadence_seconds: number
           cancelled_at: string | null
           completed_at: string | null
@@ -121,6 +122,7 @@ export type Database = {
           last_ping_at: string | null
           monitoring_mode: string
           notification_email: string
+          packet_loss_percent: number | null
           reason: Database["public"]["Enums"]["job_reason"]
           requester_id: string
           requester_name: string
@@ -129,12 +131,14 @@ export type Database = {
           status: Database["public"]["Enums"]["job_status"]
           target_ip: string | null
           target_mac: string | null
+          total_samples: number | null
         }
         Insert: {
           account_number: string
           alert_on_offline?: boolean
           alert_on_recovery?: boolean
           alert_state?: Database["public"]["Enums"]["alert_state"]
+          avg_rtt_ms?: number | null
           cadence_seconds: number
           cancelled_at?: string | null
           completed_at?: string | null
@@ -144,6 +148,7 @@ export type Database = {
           last_ping_at?: string | null
           monitoring_mode?: string
           notification_email: string
+          packet_loss_percent?: number | null
           reason: Database["public"]["Enums"]["job_reason"]
           requester_id: string
           requester_name: string
@@ -152,12 +157,14 @@ export type Database = {
           status?: Database["public"]["Enums"]["job_status"]
           target_ip?: string | null
           target_mac?: string | null
+          total_samples?: number | null
         }
         Update: {
           account_number?: string
           alert_on_offline?: boolean
           alert_on_recovery?: boolean
           alert_state?: Database["public"]["Enums"]["alert_state"]
+          avg_rtt_ms?: number | null
           cadence_seconds?: number
           cancelled_at?: string | null
           completed_at?: string | null
@@ -167,6 +174,7 @@ export type Database = {
           last_ping_at?: string | null
           monitoring_mode?: string
           notification_email?: string
+          packet_loss_percent?: number | null
           reason?: Database["public"]["Enums"]["job_reason"]
           requester_id?: string
           requester_name?: string
@@ -175,6 +183,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["job_status"]
           target_ip?: string | null
           target_mac?: string | null
+          total_samples?: number | null
         }
         Relationships: []
       }

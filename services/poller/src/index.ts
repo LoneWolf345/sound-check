@@ -171,10 +171,48 @@ function isJobExpired(job: Job): boolean {
   return Date.now() > endTime;
 }
 
+// Calculate and update job summary metrics
+async function updateJobSummary(jobId: string): Promise<{ avgRtt: number | null; packetLoss: number | null; totalSamples: number }> {
+  const { data: samples } = await supabase
+    .from('samples')
+    .select('status, rtt_ms')
+    .eq('job_id', jobId);
+
+  if (!samples?.length) {
+    return { avgRtt: null, packetLoss: null, totalSamples: 0 };
+  }
+
+  const successSamples = samples.filter(s => s.status === 'success');
+  const missedSamples = samples.filter(s => s.status === 'missed');
+  const validAttempts = successSamples.length + missedSamples.length;
+
+  const avgRtt = successSamples.length > 0
+    ? successSamples.reduce((sum, s) => sum + (s.rtt_ms || 0), 0) / successSamples.length
+    : null;
+
+  const packetLoss = validAttempts > 0
+    ? (missedSamples.length / validAttempts) * 100
+    : null;
+
+  await supabase
+    .from('jobs')
+    .update({
+      avg_rtt_ms: avgRtt,
+      packet_loss_percent: packetLoss,
+      total_samples: samples.length,
+    })
+    .eq('id', jobId);
+
+  return { avgRtt, packetLoss, totalSamples: samples.length };
+}
+
 // Complete an expired job
 async function completeJob(jobId: string): Promise<void> {
   console.log(`Completing expired job ${jobId}`);
-  
+
+  // Calculate final summary metrics before completing
+  await updateJobSummary(jobId);
+
   const { error } = await supabase
     .from('jobs')
     .update({

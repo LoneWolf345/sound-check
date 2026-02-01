@@ -190,11 +190,12 @@ export default function JobList() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Account</TableHead>
-                  <TableHead>Target</TableHead>
+                  <TableHead>Target IP</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Avg RTT</TableHead>
+                  <TableHead className="text-right">Packet Loss</TableHead>
                   <TableHead>Started</TableHead>
-                  <TableHead>Source</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -203,7 +204,7 @@ export default function JobList() {
                   <TableRow key={job.id}>
                     <TableCell className="font-medium">{job.account_number}</TableCell>
                     <TableCell className="font-mono text-sm">
-                      {job.target_mac || job.target_ip}
+                      {job.target_ip || '—'}
                     </TableCell>
                     <TableCell>{formatDurationFromMinutes(job.duration_minutes)}</TableCell>
                     <TableCell>
@@ -211,13 +212,18 @@ export default function JobList() {
                         {job.status}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      {job.avg_rtt_ms !== null ? `${Number(job.avg_rtt_ms).toFixed(1)} ms` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      {job.packet_loss_percent !== null 
+                        ? <span className={Number(job.packet_loss_percent) > 2 ? 'text-destructive' : ''}>
+                            {Number(job.packet_loss_percent).toFixed(1)}%
+                          </span>
+                        : '—'}
+                    </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {formatDateTime(job.started_at)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {job.source === 'tempo' ? 'TeMPO' : 'Web'}
-                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
