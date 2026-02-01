@@ -46,6 +46,7 @@ const DEFAULT_CADENCE_PRESETS: CadencePresetsConfig = {
 const DEFAULT_THRESHOLDS: ThresholdsConfig = {
   packet_loss_percent: 2,
   p95_latency_ms: 100,
+  jitter_ms: 30,
   system_error_percent: 5,
 };
 

@@ -58,10 +58,12 @@ export function generateMockSamples(
   const samples: Sample[] = [];
   let inBurst = false;
   let burstRemaining = 0;
+  let previousRtt: number | null = null;
 
   for (let i = 0; i < totalSamples; i++) {
     let status: SampleStatus;
     let rtt: number | null = null;
+    let jitter: number | null = null;
 
     // Handle burst misses
     if (inBurst && burstRemaining > 0) {
@@ -78,6 +80,11 @@ export function generateMockSamples(
     } else if (Math.random() < config.successRate) {
       status = 'success';
       rtt = Math.max(1, randomGaussian(config.avgRtt, config.rttVariance));
+      // Calculate jitter as absolute difference from previous RTT (RFC 3550 IPDV)
+      if (previousRtt !== null) {
+        jitter = Math.abs(rtt - previousRtt);
+      }
+      previousRtt = rtt;
     } else if (Math.random() < 0.95) {
       status = 'missed';
     } else {
@@ -91,6 +98,7 @@ export function generateMockSamples(
       job_id: jobId,
       status,
       rtt_ms: rtt ? Math.round(rtt * 100) / 100 : null,
+      jitter_ms: jitter ? Math.round(jitter * 100) / 100 : null,
       recorded_at: recordedAt.toISOString(),
       sequence_number: i + 1,
     });

@@ -7,6 +7,8 @@ export type SimulatorScenario = 'healthy' | 'intermittent' | 'offline';
 
 // Store active simulators by job ID
 const activeSimulators = new Map<string, NodeJS.Timeout>();
+// Store previous RTT for jitter calculation per job
+const previousRttByJob = new Map<string, number | null>();
 
 // Generate a single sample based on scenario
 function generateSample(
@@ -121,15 +123,28 @@ export function startSimulator(
   activeSimulators.set(jobId, intervalId);
 }
 
-// Insert a sample into the database
+// Insert a sample into the database with jitter calculation
 async function insertSample(jobId: string, sequenceNumber: number, scenario: SimulatorScenario) {
   const sample = generateSample(scenario, sequenceNumber);
+
+  // Calculate jitter as absolute difference from previous RTT (RFC 3550 IPDV)
+  let jitter_ms: number | null = null;
+  const previousRtt = previousRttByJob.get(jobId);
+  
+  if (sample.status === 'success' && sample.rtt_ms !== null) {
+    if (previousRtt !== null) {
+      jitter_ms = Math.abs(sample.rtt_ms - previousRtt);
+      jitter_ms = Math.round(jitter_ms * 100) / 100; // Round to 2 decimals
+    }
+    previousRttByJob.set(jobId, sample.rtt_ms);
+  }
 
   const { error } = await supabase.from('samples').insert({
     job_id: jobId,
     sequence_number: sequenceNumber,
     status: sample.status,
     rtt_ms: sample.rtt_ms,
+    jitter_ms: jitter_ms,
   });
 
   if (error) {
@@ -206,6 +221,7 @@ export function stopSimulator(jobId: string) {
   if (intervalId) {
     clearInterval(intervalId);
     activeSimulators.delete(jobId);
+    previousRttByJob.delete(jobId); // Clean up jitter tracking
     console.log(`Stopped simulator for job ${jobId}`);
   }
 }

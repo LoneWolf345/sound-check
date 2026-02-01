@@ -3,6 +3,7 @@ import type { Sample, JobSummary, ThresholdsConfig } from '@/types';
 const DEFAULT_THRESHOLDS: ThresholdsConfig = {
   packet_loss_percent: 2,
   p95_latency_ms: 100,
+  jitter_ms: 30,
   system_error_percent: 5,
 };
 
@@ -22,11 +23,14 @@ export function calculateJobSummary(
       avgRttMs: null,
       maxRttMs: null,
       p95RttMs: null,
+      avgJitterMs: null,
+      maxJitterMs: null,
       successRate: 0,
       outageEventCount: 0,
       longestMissStreak: 0,
       passPacketLoss: true,
       passLatency: true,
+      passJitter: true,
       overallPass: true,
     };
   }
@@ -60,6 +64,19 @@ export function calculateJobSummary(
     ? rttValues[Math.floor(rttValues.length * 0.95)] ?? rttValues[rttValues.length - 1]
     : null;
 
+  // Jitter calculations (RFC 3550 IPDV - interarrival jitter)
+  const jitterValues = samples
+    .filter(s => s.jitter_ms !== null && s.jitter_ms !== undefined)
+    .map(s => s.jitter_ms as number);
+
+  const avgJitterMs = jitterValues.length > 0
+    ? jitterValues.reduce((sum, v) => sum + v, 0) / jitterValues.length
+    : null;
+
+  const maxJitterMs = jitterValues.length > 0
+    ? Math.max(...jitterValues)
+    : null;
+
   const successRate = totalSamples > 0
     ? (successCount / totalSamples) * 100
     : 0;
@@ -70,7 +87,8 @@ export function calculateJobSummary(
   // Pass/fail evaluation
   const passPacketLoss = packetLossPercent <= thresholds.packet_loss_percent;
   const passLatency = p95RttMs === null || p95RttMs <= thresholds.p95_latency_ms;
-  const overallPass = passPacketLoss && passLatency;
+  const passJitter = avgJitterMs === null || avgJitterMs <= thresholds.jitter_ms;
+  const overallPass = passPacketLoss && passLatency && passJitter;
 
   return {
     totalSamples,
@@ -81,11 +99,14 @@ export function calculateJobSummary(
     avgRttMs,
     maxRttMs,
     p95RttMs,
+    avgJitterMs,
+    maxJitterMs,
     successRate,
     outageEventCount,
     longestMissStreak,
     passPacketLoss,
     passLatency,
+    passJitter,
     overallPass,
   };
 }

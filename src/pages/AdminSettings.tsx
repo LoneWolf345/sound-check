@@ -41,6 +41,7 @@ export default function AdminSettings() {
   const [thresholds, setThresholds] = useState<ThresholdsConfig>({
     packet_loss_percent: 2,
     p95_latency_ms: 100,
+    jitter_ms: 30,
     system_error_percent: 5,
   });
   const [usageLimits, setUsageLimits] = useState<UsageLimitsConfig>({
@@ -270,7 +271,7 @@ export default function AdminSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label>Packet Loss Threshold (%)</Label>
               <div className="flex items-center gap-2">
@@ -291,6 +292,18 @@ export default function AdminSettings() {
                   type="number"
                   value={thresholds.p95_latency_ms}
                   onChange={(e) => setThresholds({ ...thresholds, p95_latency_ms: parseInt(e.target.value) || 0 })}
+                  className="w-24"
+                />
+                <span className="text-sm text-muted-foreground">ms (PASS if ≤)</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Jitter Threshold (ms)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  value={thresholds.jitter_ms}
+                  onChange={(e) => setThresholds({ ...thresholds, jitter_ms: parseInt(e.target.value) || 0 })}
                   className="w-24"
                 />
                 <span className="text-sm text-muted-foreground">ms (PASS if ≤)</span>
