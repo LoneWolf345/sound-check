@@ -3,16 +3,34 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Job, Sample, JobStatus } from '@/types';
 import type { TablesInsert } from '@/integrations/supabase/types';
 
-// Fetch all jobs with optional filters
-export function useJobs(options?: { status?: JobStatus | 'all'; search?: string }) {
+// Response type for paginated queries
+interface PaginatedResult<T> {
+  data: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+// Fetch all jobs with optional filters and pagination
+export function useJobs(options?: { 
+  status?: JobStatus | 'all'; 
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const page = options?.page ?? 1;
+  const pageSize = Math.min(options?.pageSize ?? 50, 100); // Cap at 100
+  const offset = (page - 1) * pageSize;
+
   return useQuery({
-    queryKey: ['jobs', options?.status, options?.search],
-    queryFn: async () => {
+    queryKey: ['jobs', options?.status, options?.search, page, pageSize],
+    queryFn: async (): Promise<PaginatedResult<Job>> => {
       let query = supabase
         .from('jobs')
-        .select('*')
+        .select('*', { count: 'exact' })
         .order('created_at', { ascending: false })
-        .limit(100);
+        .range(offset, offset + pageSize - 1);
 
       if (options?.status && options.status !== 'all') {
         query = query.eq('status', options.status);
@@ -25,9 +43,17 @@ export function useJobs(options?: { status?: JobStatus | 'all'; search?: string 
         );
       }
 
-      const { data, error } = await query;
+      const { data, error, count } = await query;
       if (error) throw error;
-      return data as Job[];
+      
+      const total = count ?? 0;
+      return {
+        data: data as Job[],
+        total,
+        page,
+        pageSize,
+        totalPages: Math.ceil(total / pageSize),
+      };
     },
   });
 }
@@ -50,19 +76,53 @@ export function useJob(id: string | undefined) {
   });
 }
 
-// Fetch samples for a job
-export function useJobSamples(jobId: string | undefined) {
+// Fetch samples for a job with windowed loading (default 500 most recent)
+export function useJobSamples(jobId: string | undefined, options?: { limit?: number }) {
+  const limit = Math.min(options?.limit ?? 500, 1000); // Cap at 1000 samples
+  
   return useQuery({
-    queryKey: ['samples', jobId],
+    queryKey: ['samples', jobId, limit],
     queryFn: async () => {
       if (!jobId) return [];
       const { data, error } = await supabase
         .from('samples')
         .select('*')
         .eq('job_id', jobId)
-        .order('sequence_number', { ascending: true });
+        .order('sequence_number', { ascending: false })
+        .limit(limit);
       if (error) throw error;
-      return data as Sample[];
+      // Reverse to get chronological order for charts
+      return (data as Sample[]).reverse();
+    },
+    enabled: !!jobId,
+  });
+}
+
+// Fetch samples with pagination and total count
+export function useJobSamplesWindowed(
+  jobId: string | undefined,
+  options?: { limit?: number; offset?: number }
+) {
+  const limit = options?.limit ?? 500;
+  const offset = options?.offset ?? 0;
+  
+  return useQuery({
+    queryKey: ['samples-windowed', jobId, limit, offset],
+    queryFn: async () => {
+      if (!jobId) return { samples: [], total: 0 };
+      
+      const { data, count, error } = await supabase
+        .from('samples')
+        .select('*', { count: 'exact' })
+        .eq('job_id', jobId)
+        .order('sequence_number', { ascending: false })
+        .range(offset, offset + limit - 1);
+        
+      if (error) throw error;
+      return { 
+        samples: (data as Sample[]).reverse(), 
+        total: count ?? 0 
+      };
     },
     enabled: !!jobId,
   });
@@ -137,7 +197,7 @@ export async function checkUsageLimits(userId: string): Promise<{ canCreate: boo
 
   // Default limits - will be fetched from admin_config later
   const maxJobsPerUserPerDay = 50;
-  const maxRunningJobs = 100;
+  const maxRunningJobs = 5000; // Updated for scale
 
   if (userJobsToday >= maxJobsPerUserPerDay) {
     return { canCreate: false, reason: `You have reached your daily limit of ${maxJobsPerUserPerDay} jobs.` };

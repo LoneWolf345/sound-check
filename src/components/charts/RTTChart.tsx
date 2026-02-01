@@ -30,9 +30,20 @@ interface OutageRegion {
   end: number;
 }
 
+// Downsample samples for performance when there are too many data points
+function downsample(samples: Sample[], maxPoints: number = 500): Sample[] {
+  if (samples.length <= maxPoints) return samples;
+  
+  const step = Math.ceil(samples.length / maxPoints);
+  return samples.filter((_, i) => i % step === 0);
+}
+
 export function RTTChart({ samples }: RTTChartProps) {
-  const { chartData, outageRegions, yDomain } = useMemo(() => {
-    const data: ChartDataPoint[] = samples.map((sample, index) => ({
+  const { chartData, outageRegions, yDomain, totalSamples, displayedSamples } = useMemo(() => {
+    // Downsample for performance - limit to 500 points max
+    const displaySamples = downsample(samples, 500);
+    
+    const data: ChartDataPoint[] = displaySamples.map((sample, index) => ({
       time: new Date(sample.recorded_at).toLocaleTimeString(),
       rtt: sample.status === 'success' ? sample.rtt_ms : null,
       status: sample.status,
@@ -53,12 +64,12 @@ export function RTTChart({ samples }: RTTChartProps) {
     const maxRtt = rttValues.length > 0 ? Math.max(...rttValues) : 50;
     const calculatedYDomain: [number, number] = [0, roundToNice(maxRtt * 1.1)];
 
-    // Calculate outage regions (5+ consecutive misses)
+    // Calculate outage regions (5+ consecutive misses) on downsampled data
     const regions: OutageRegion[] = [];
     let streakStart: number | null = null;
     let streakCount = 0;
 
-    samples.forEach((sample, index) => {
+    displaySamples.forEach((sample, index) => {
       if (sample.status === 'missed') {
         if (streakStart === null) {
           streakStart = index;
@@ -75,13 +86,15 @@ export function RTTChart({ samples }: RTTChartProps) {
 
     // Handle trailing streak
     if (streakCount >= 5 && streakStart !== null) {
-      regions.push({ start: streakStart, end: samples.length - 1 });
+      regions.push({ start: streakStart, end: displaySamples.length - 1 });
     }
 
     return { 
       chartData: data, 
       outageRegions: regions, 
       yDomain: calculatedYDomain,
+      totalSamples: samples.length,
+      displayedSamples: displaySamples.length,
     };
   }, [samples]);
 
@@ -99,6 +112,11 @@ export function RTTChart({ samples }: RTTChartProps) {
         <CardDescription>
           RTT (ms) for each ping attempt. Red markers indicate missed pings, yellow indicates system errors.
           Shaded areas show outage periods (5+ consecutive misses).
+          {totalSamples > displayedSamples && (
+            <span className="block mt-1 text-xs text-muted-foreground">
+              Showing {displayedSamples} of {totalSamples} samples (downsampled for performance)
+            </span>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent>

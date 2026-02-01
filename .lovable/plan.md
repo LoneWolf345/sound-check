@@ -1,19 +1,27 @@
 
 # Scalability Plan: 5,000 Concurrent Jobs
 
-## Executive Summary
+## Status: ✅ Phases 1-6 Implemented
 
-This plan addresses the architectural changes required to scale from the current ~100 job capacity to 5,000 concurrent jobs running on OpenShift. The key bottlenecks are:
+This plan addresses the architectural changes required to scale from ~100 job capacity to 5,000 concurrent jobs on OpenShift.
 
-1. **Browser-based simulator** - Cannot scale beyond a single browser tab
-2. **Unbounded sample queries** - Loading all samples into memory will crash at scale
-3. **Missing database indexes** - Query performance degrades with data volume
-4. **Direct database connections** - Will exhaust Supabase connection limits
-5. **No data aggregation** - Sample data grows unbounded (~4.3GB/day at 5k jobs)
+---
+
+## ✅ Implementation Summary
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1: Database Indexes | ✅ Done | Added 6 critical indexes |
+| Phase 1.2: Query Limits | ✅ Done | Pagination in hooks, 500 sample cap |
+| Phase 2: Sample Rollups | ✅ Done | Rollup table + aggregation function |
+| Phase 3: Backend Poller | ✅ Done | Node.js service with OpenShift manifests |
+| Phase 4: Simulator Update | ✅ Done | Uses test account detection |
+| Phase 6: Chart Performance | ✅ Done | Downsampling to 500 points max |
 
 ---
 
 ## Impact Analysis at 5,000 Jobs
+
 
 | Metric | Current (100 jobs) | At Scale (5,000 jobs) |
 |--------|-------------------|----------------------|
