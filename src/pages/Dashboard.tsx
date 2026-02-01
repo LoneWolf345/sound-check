@@ -56,7 +56,9 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            Welcome back{profile?.display_name ? `, ${profile.display_name.split(' ')[0]}` : ''}
+            {profile?.display_name 
+              ? `Welcome back, ${profile.display_name.split(' ')[0]}`
+              : 'Sound Check Dashboard'}
           </h1>
           <p className="text-muted-foreground">
             Monitor modem connectivity and track issues in real-time.

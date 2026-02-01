@@ -32,47 +32,41 @@ const App = () => (
             <Route path="/register" element={<Register />} />
             <Route path="/sso/callback" element={<SSOCallback />} />
             
-            {/* Protected routes */}
+            {/* Public routes - accessible without login */}
             <Route
               path="/"
               element={
-                <ProtectedRoute>
-                  <AppLayout>
-                    <Dashboard />
-                  </AppLayout>
-                </ProtectedRoute>
+                <AppLayout>
+                  <Dashboard />
+                </AppLayout>
               }
             />
             <Route
               path="/jobs/new"
               element={
-                <ProtectedRoute>
-                  <AppLayout>
-                    <CreateJob />
-                  </AppLayout>
-                </ProtectedRoute>
+                <AppLayout>
+                  <CreateJob />
+                </AppLayout>
               }
             />
             <Route
               path="/jobs"
               element={
-                <ProtectedRoute>
-                  <AppLayout>
-                    <JobList />
-                  </AppLayout>
-                </ProtectedRoute>
+                <AppLayout>
+                  <JobList />
+                </AppLayout>
               }
             />
             <Route
               path="/jobs/:id"
               element={
-                <ProtectedRoute>
-                  <AppLayout>
-                    <JobDetail />
-                  </AppLayout>
-                </ProtectedRoute>
+                <AppLayout>
+                  <JobDetail />
+                </AppLayout>
               }
             />
+            
+            {/* Admin routes - require authentication + admin role */}
             <Route
               path="/admin"
               element={

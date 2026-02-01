@@ -1,4 +1,4 @@
-import { NavLink as RouterNavLink, useLocation } from 'react-router-dom';
+import { NavLink as RouterNavLink, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
   Home,
@@ -11,6 +11,7 @@ import {
   X,
   AudioWaveform,
   LogOut,
+  LogIn,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,7 +37,8 @@ const adminItems = [
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { profile, isAdmin, isLoading, signOut } = useAuthContext();
+  const navigate = useNavigate();
+  const { user, profile, isAdmin, isLoading, signOut } = useAuthContext();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -101,35 +103,42 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               ))}
           </nav>
 
-          {/* User Menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-2">
-                <User className="h-4 w-4" />
-                <span className="hidden sm:inline">
-                  {isLoading ? 'Loading...' : profile?.display_name ?? 'User'}
-                </span>
-                {isAdmin && (
-                  <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                    Admin
+          {/* User Menu / Sign In Button */}
+          {user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="gap-2">
+                  <User className="h-4 w-4" />
+                  <span className="hidden sm:inline">
+                    {isLoading ? 'Loading...' : profile?.display_name ?? 'User'}
                   </span>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 bg-popover">
-              <div className="px-2 py-1.5">
-                <p className="text-sm font-medium">{profile?.display_name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {isAdmin ? 'Administrator' : 'User'}
-                </p>
-              </div>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={signOut} className="text-destructive">
-                <LogOut className="h-4 w-4 mr-2" />
-                Sign Out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  {isAdmin && (
+                    <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                      Admin
+                    </span>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 bg-popover">
+                <div className="px-2 py-1.5">
+                  <p className="text-sm font-medium">{profile?.display_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {isAdmin ? 'Administrator' : 'User'}
+                  </p>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={signOut} className="text-destructive">
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button variant="outline" onClick={() => navigate('/login')} className="gap-2">
+              <LogIn className="h-4 w-4" />
+              <span className="hidden sm:inline">Sign In</span>
+            </Button>
+          )}
         </div>
 
         {/* Mobile Navigation */}

@@ -67,7 +67,28 @@ type JobFormValues = z.infer<typeof jobFormSchema>;
 export default function CreateJob() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, profile } = useAuthContext();
+  const { user, profile, isLoading: authLoading } = useAuthContext();
+
+  // Guard: require authentication to create jobs
+  if (!authLoading && !user) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle>Sign in Required</CardTitle>
+            <CardDescription>
+              You need to be signed in to create a monitoring job.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => navigate('/login', { state: { from: location } })}>
+              Sign In to Continue
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
   
   // Account validation state
   const [isValidating, setIsValidating] = useState(false);
