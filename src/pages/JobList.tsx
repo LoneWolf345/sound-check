@@ -61,11 +61,19 @@ export default function JobList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'all'>('all');
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
 
-  const { data: jobs, isLoading, error } = useJobs({
+  const { data: jobsResult, isLoading, error } = useJobs({
     status: statusFilter,
     search: searchQuery || undefined,
+    page,
+    pageSize,
   });
+
+  const jobs = jobsResult?.data ?? [];
+  const totalJobs = jobsResult?.total ?? 0;
+  const totalPages = jobsResult?.totalPages ?? 1;
 
   const cancelJobMutation = useCancelJob();
 
@@ -158,7 +166,7 @@ export default function JobList() {
         <CardHeader>
           <CardTitle>Jobs</CardTitle>
           <CardDescription>
-            {isLoading ? 'Loading...' : `${jobs?.length ?? 0} job${jobs?.length !== 1 ? 's' : ''} found`}
+            {isLoading ? 'Loading...' : `${totalJobs} job${totalJobs !== 1 ? 's' : ''} found`}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -177,6 +185,7 @@ export default function JobList() {
               <p>No jobs found matching your criteria.</p>
             </div>
           ) : (
+            <div className="space-y-4">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -261,10 +270,40 @@ export default function JobList() {
                 ))}
               </TableBody>
             </Table>
+            
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-4">
+                <p className="text-sm text-muted-foreground">
+                  Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, totalJobs)} of {totalJobs} jobs
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+            </div>
           )}
         </CardContent>
       </Card>
     </div>
   );
 }
-

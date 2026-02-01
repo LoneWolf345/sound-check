@@ -199,6 +199,68 @@ export type Database = {
         }
         Relationships: []
       }
+      sample_rollups: {
+        Row: {
+          avg_jitter_ms: number | null
+          avg_rtt_ms: number | null
+          bucket_end: string
+          bucket_start: string
+          created_at: string
+          id: string
+          job_id: string
+          max_jitter_ms: number | null
+          max_rtt_ms: number | null
+          min_rtt_ms: number | null
+          missed_count: number
+          p95_rtt_ms: number | null
+          sample_count: number
+          success_count: number
+          system_error_count: number
+        }
+        Insert: {
+          avg_jitter_ms?: number | null
+          avg_rtt_ms?: number | null
+          bucket_end: string
+          bucket_start: string
+          created_at?: string
+          id?: string
+          job_id: string
+          max_jitter_ms?: number | null
+          max_rtt_ms?: number | null
+          min_rtt_ms?: number | null
+          missed_count?: number
+          p95_rtt_ms?: number | null
+          sample_count?: number
+          success_count?: number
+          system_error_count?: number
+        }
+        Update: {
+          avg_jitter_ms?: number | null
+          avg_rtt_ms?: number | null
+          bucket_end?: string
+          bucket_start?: string
+          created_at?: string
+          id?: string
+          job_id?: string
+          max_jitter_ms?: number | null
+          max_rtt_ms?: number | null
+          min_rtt_ms?: number | null
+          missed_count?: number
+          p95_rtt_ms?: number | null
+          sample_count?: number
+          success_count?: number
+          system_error_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sample_rollups_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       samples: {
         Row: {
           id: string
@@ -263,6 +325,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_job_rollups: {
+        Args: { p_bucket_minutes?: number; p_job_id: string }
+        Returns: number
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

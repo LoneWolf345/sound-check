@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soundcheck-poller
+  labels:
+    app: soundcheck-poller
+    component: backend
+spec:
+  replicas: 5  # 5 replicas for ~5,000 jobs (1,000 each)
+  selector:
+    matchLabels:
+      app: soundcheck-poller
+  template:
+    metadata:
+      labels:
+        app: soundcheck-poller
+    spec:
+      containers:
+        - name: poller
+          image: your-registry/soundcheck-poller:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            # Supabase connection (use pooler for high concurrency)
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: soundcheck-secrets
+                  key: supabase-pooler-url
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: soundcheck-secrets
+                  key: supabase-service-role-key
+            # SpreeDB Latency API
+            - name: LATENCY_API_URL
+              value: "http://spreedb-latency.internal:4402"
+            # Polling configuration
+            - name: POLL_INTERVAL_MS
+              value: "5000"
+            - name: BATCH_FLUSH_INTERVAL_MS
+              value: "2000"
+            - name: BATCH_SIZE
+              value: "100"
+            - name: CONCURRENCY
+              value: "50"
+            # Horizontal scaling: total replicas
+            - name: REPLICA_COUNT
+              value: "5"
+            # Unique replica ID from pod ordinal (for StatefulSet) or use downward API
+            - name: REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['replica-id']
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: soundcheck-poller
+  labels:
+    app: soundcheck-poller
+spec:
+  selector:
+    app: soundcheck-poller
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+  type: ClusterIP
+
+---
+# Pod Disruption Budget to ensure availability during updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: soundcheck-poller-pdb
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: soundcheck-poller
