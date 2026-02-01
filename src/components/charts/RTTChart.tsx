@@ -9,7 +9,6 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   ReferenceArea,
-  ReferenceDot,
 } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Sample } from '@/types';
@@ -32,7 +31,7 @@ interface OutageRegion {
 }
 
 export function RTTChart({ samples }: RTTChartProps) {
-  const { chartData, outageRegions, yDomain, missedIndices, errorIndices } = useMemo(() => {
+  const { chartData, outageRegions, yDomain } = useMemo(() => {
     const data: ChartDataPoint[] = samples.map((sample, index) => ({
       time: new Date(sample.recorded_at).toLocaleTimeString(),
       rtt: sample.status === 'success' ? sample.rtt_ms : null,
@@ -41,14 +40,18 @@ export function RTTChart({ samples }: RTTChartProps) {
       recordedAt: sample.recorded_at,
     }));
 
+    // Round up to nearest "nice" number for stable Y-axis
+    const roundToNice = (value: number): number => {
+      if (value <= 50) return 50;
+      if (value <= 100) return 100;
+      if (value <= 200) return 200;
+      return Math.ceil(value / 100) * 100;
+    };
+
     // Calculate Y-axis domain from actual RTT values
     const rttValues = data.map(d => d.rtt).filter((v): v is number => v !== null);
-    const maxRtt = rttValues.length > 0 ? Math.max(...rttValues) : 100;
-    const calculatedYDomain: [number, number] = [0, Math.max(maxRtt * 1.1, 10)];
-
-    // Get indices for missed and error samples
-    const missed = data.filter(d => d.status === 'missed').map(d => d.index);
-    const errors = data.filter(d => d.status === 'system_error').map(d => d.index);
+    const maxRtt = rttValues.length > 0 ? Math.max(...rttValues) : 50;
+    const calculatedYDomain: [number, number] = [0, roundToNice(maxRtt * 1.1)];
 
     // Calculate outage regions (5+ consecutive misses)
     const regions: OutageRegion[] = [];
@@ -79,8 +82,6 @@ export function RTTChart({ samples }: RTTChartProps) {
       chartData: data, 
       outageRegions: regions, 
       yDomain: calculatedYDomain,
-      missedIndices: missed,
-      errorIndices: errors,
     };
   }, [samples]);
 
@@ -160,40 +161,55 @@ export function RTTChart({ samples }: RTTChartProps) {
                 label={{ value: 'p95 threshold', position: 'right', fontSize: 10 }}
               />
 
-              {/* RTT line with dots */}
+              {/* RTT line with custom dots for status markers */}
               <Line
                 type="monotone"
                 dataKey="rtt"
                 stroke="hsl(var(--primary))"
                 strokeWidth={2}
-                dot={{ r: 3, fill: 'hsl(var(--primary))' }}
-                activeDot={{ r: 5 }}
+                isAnimationActive={false}
                 connectNulls={false}
+                activeDot={{ r: 5 }}
+                dot={(props: any) => {
+                  const { cx, cy, payload, index } = props;
+                  if (!cx || cx === null) return null;
+                  
+                  if (payload.status === 'missed') {
+                    return (
+                      <circle
+                        key={`dot-${index}`}
+                        cx={cx}
+                        cy={props.yAxis?.y + props.yAxis?.height || 0}
+                        r={4}
+                        fill="hsl(var(--destructive))"
+                      />
+                    );
+                  }
+                  if (payload.status === 'system_error') {
+                    return (
+                      <circle
+                        key={`dot-${index}`}
+                        cx={cx}
+                        cy={props.yAxis?.y + props.yAxis?.height || 0}
+                        r={4}
+                        fill="hsl(38, 92%, 50%)"
+                      />
+                    );
+                  }
+                  if (payload.status === 'success' && cy !== null) {
+                    return (
+                      <circle
+                        key={`dot-${index}`}
+                        cx={cx}
+                        cy={cy}
+                        r={3}
+                        fill="hsl(var(--primary))"
+                      />
+                    );
+                  }
+                  return null;
+                }}
               />
-
-              {/* Missed ping markers at y=0 using ReferenceDot */}
-              {missedIndices.map((idx) => (
-                <ReferenceDot
-                  key={`missed-${idx}`}
-                  x={idx}
-                  y={0}
-                  r={4}
-                  fill="hsl(var(--destructive))"
-                  stroke="none"
-                />
-              ))}
-
-              {/* System error markers at y=0 using ReferenceDot */}
-              {errorIndices.map((idx) => (
-                <ReferenceDot
-                  key={`error-${idx}`}
-                  x={idx}
-                  y={0}
-                  r={4}
-                  fill="hsl(38, 92%, 50%)"
-                  stroke="none"
-                />
-              ))}
             </LineChart>
           </ResponsiveContainer>
         </div>
