@@ -88,6 +88,8 @@ export function useJobSamples(jobId: string | undefined, options?: { limit?: num
         .from('samples')
         .select('*')
         .eq('job_id', jobId)
+        // recorded_at is the canonical ordering; sequence_number may reset when poller replicas restart
+        .order('recorded_at', { ascending: false })
         .order('sequence_number', { ascending: false })
         .limit(limit);
       if (error) throw error;
@@ -115,6 +117,8 @@ export function useJobSamplesWindowed(
         .from('samples')
         .select('*', { count: 'exact' })
         .eq('job_id', jobId)
+        // recorded_at is the canonical ordering; sequence_number may reset when poller replicas restart
+        .order('recorded_at', { ascending: false })
         .order('sequence_number', { ascending: false })
         .range(offset, offset + limit - 1);
         

@@ -30,7 +30,13 @@ export function AvailabilityTimeline({
   height = 32,
 }: AvailabilityTimelineProps) {
   const sortedSamples = useMemo(
-    () => [...samples].sort((a, b) => a.sequence_number - b.sequence_number),
+    () =>
+      [...samples].sort((a, b) => {
+        const at = new Date(a.recorded_at).getTime();
+        const bt = new Date(b.recorded_at).getTime();
+        if (at !== bt) return at - bt;
+        return a.sequence_number - b.sequence_number;
+      }),
     [samples]
   );
 
