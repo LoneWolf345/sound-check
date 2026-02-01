@@ -1,110 +1,136 @@
 
-# Plan: Fix RTT Chart Animation Issues
+# Plan: Fix Completion Emails for Real Polling Jobs
 
 ## Problem Summary
-The Latency Over Time chart exhibits jarring animations when new samples arrive during a running job. This is caused by Recharts re-animating the entire line from scratch on every data update, combined with dynamic Y-axis rescaling.
+
+Completion emails are **not being sent** for any jobs (both `simulated` and `real_polling` modes). Investigation revealed:
+
+1. **No email records exist** - The `alerts` table has 0 `completion_email` entries for all completed jobs
+2. **Edge function never invoked** - No logs exist for `send-completion-email` function
+3. **Multiple issues in the auto-completion flow** cause emails to be skipped
+
+## Root Cause Analysis
+
+### Issue 1: Session May Not Exist When Auto-Completing
+
+In `completeJob()` (ping-simulator.ts lines 162-167):
+```typescript
+const { data: { session } } = await supabase.auth.getSession();
+
+if (!session?.access_token) {
+  console.warn('No authenticated session - completion email will not be sent');
+  return;  // ← Silent exit, no email sent
+}
+```
+
+When a job auto-completes via `checkAndCompleteExpiredJobs()` on page load, the auth session might not be fully initialized yet, causing this check to fail silently.
+
+### Issue 2: Simulator Resume Logic Ignores Monitoring Mode
+
+In `checkAndCompleteExpiredJobs()` (line 258):
+```typescript
+resumeSimulatorForJob(job, lastSequence + 1);
+```
+
+This attempts to resume the simulator for ALL running jobs, including `real_polling` jobs. For `real_polling` jobs, this creates **duplicate simulated samples** alongside the real samples from the external poller (which explains the initial "5 missed pings" - they might be from this).
+
+### Issue 3: No Retry or Fallback for Email Delivery
+
+If the email API call fails for any reason, there's no retry mechanism or queue - the email is simply lost.
+
+---
 
 ## Solution Overview
-Disable animations for real-time data updates while preserving smooth visual transitions through CSS and strategic component optimizations.
+
+Fix the auto-completion flow to properly handle `real_polling` jobs and ensure emails are sent reliably.
 
 ---
 
 ## Implementation Steps
 
-### 1. Disable Line Animation on Data Updates
-Modify the `<Line>` component to disable the default stroke-dasharray animation that causes the entire line to redraw on each update.
+### Step 1: Add Monitoring Mode Check to Resume Logic
 
-**Changes to `RTTChart.tsx`:**
-- Add `isAnimationActive={false}` to the Line component
-- This prevents the jarring "line drawing" effect when new samples arrive
+Prevent simulator resume attempts for `real_polling` jobs in both `checkAndCompleteExpiredJobs()` and `checkAndHandleJob()`:
 
-### 2. Stabilize Y-Axis Domain
-Prevent the Y-axis from constantly rescaling by implementing a more stable domain calculation that only expands (never shrinks) during a running job.
-
-**Approach:**
-- Round the max Y value up to the nearest "nice" number (e.g., 50, 100, 150)
-- Add a minimum Y-axis height to prevent wild scaling with initial low values
-
-### 3. Replace Individual ReferenceDots with Custom Scatter Points
-Instead of rendering hundreds of `<ReferenceDot>` components (one per missed/error sample), use a single `<Scatter>` series or custom dot rendering for better performance.
-
-**Approach:**
-- Use the Line component's `dot` prop with a custom render function
-- Render missed/error markers as part of the same render pass
-
-### 4. Add CSS Transitions for Smooth Updates
-Apply CSS transitions to chart elements for smoother visual updates without the SVG animation overhead.
-
-**Approach:**
-- Add transition classes to the chart container
-- Ensure dots and markers transition smoothly
-
-### 5. Memoize Chart Data Transformation
-Ensure the `useMemo` hook properly prevents unnecessary recalculations by verifying the dependency array is correct.
-
----
-
-## Technical Details
-
-### File: `src/components/charts/RTTChart.tsx`
-
-#### Animation Disable
-```tsx
-<Line
-  type="monotone"
-  dataKey="rtt"
-  stroke="hsl(var(--primary))"
-  strokeWidth={2}
-  dot={{ r: 3, fill: 'hsl(var(--primary))' }}
-  activeDot={{ r: 5 }}
-  connectNulls={false}
-  isAnimationActive={false}  // Disable re-animation on data updates
-/>
+```typescript
+// In checkAndCompleteExpiredJobs():
+} else if (!isSimulatorRunning(job.id) && job.monitoring_mode !== 'real_polling') {
+  // Only resume simulator for simulated jobs
+  resumeSimulatorForJob(job, lastSequence + 1);
+  resumed.push(job.id);
+}
 ```
 
-#### Stable Y-Domain Calculation
-```tsx
-// Round up to nearest "nice" number for stable Y-axis
-const roundToNice = (value: number): number => {
-  if (value <= 50) return 50;
-  if (value <= 100) return 100;
-  if (value <= 200) return 200;
-  return Math.ceil(value / 100) * 100;
-};
+### Step 2: Ensure Session Exists Before Sending Email
 
-const calculatedYDomain: [number, number] = [0, roundToNice(maxRtt * 1.1)];
+Add session wait/retry logic or use a more reliable approach:
+
+```typescript
+async function completeJob(jobId: string) {
+  // Update job status first
+  const { error } = await supabase
+    .from('jobs')
+    .update({ status: 'completed', completed_at: new Date().toISOString() })
+    .eq('id', jobId);
+
+  if (error) {
+    console.error('Failed to complete job:', error);
+    return;
+  }
+
+  // Wait briefly for session to be available if needed
+  let session = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) {
+      session = data.session;
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  if (!session?.access_token) {
+    console.warn('No authenticated session after retries - completion email will not be sent');
+    return;
+  }
+
+  // Proceed with email...
+}
 ```
 
-#### Custom Dot Rendering for Status Markers
-Replace individual ReferenceDot components with a custom dot render function:
-```tsx
-<Line
-  // ... other props
-  dot={(props) => {
-    const { cx, cy, payload } = props;
-    if (payload.status === 'missed') {
-      return <circle cx={cx} cy={yDomain[0]} r={4} fill="hsl(var(--destructive))" />;
-    }
-    if (payload.status === 'system_error') {
-      return <circle cx={cx} cy={yDomain[0]} r={4} fill="hsl(38, 92%, 50%)" />;
-    }
-    if (payload.status === 'success') {
-      return <circle cx={cx} cy={cy} r={3} fill="hsl(var(--primary))" />;
-    }
-    return null;
-  }}
-/>
+### Step 3: Add Console Logging for Email Attempts
+
+Add more detailed logging to trace email delivery issues:
+
+```typescript
+console.log(`Attempting to send completion email for job ${jobId}...`);
+const response = await fetch(...);
+console.log(`Email API response status: ${response.status}`);
 ```
 
----
+### Step 4: Update Job Type to Include monitoring_mode
 
-## Expected Outcome
+Ensure the `resumeSimulatorForJob` function signature and callers pass `monitoring_mode`:
 
-After implementation:
-- New samples will appear instantly without the line "redrawing" animation
-- Y-axis will remain stable, only expanding when necessary
-- Performance will improve for long-duration jobs with many samples
-- The visual experience will feel responsive and professional
+```typescript
+export function resumeSimulatorForJob(
+  job: { 
+    id: string; 
+    started_at: string; 
+    duration_minutes: number; 
+    cadence_seconds: number;
+    monitoring_mode?: string;  // Add this
+  },
+  startSequence: number
+) {
+  // Skip for real_polling jobs
+  if (job.monitoring_mode === 'real_polling') {
+    console.log(`Skipping simulator resume for real_polling job ${job.id}`);
+    return;
+  }
+  // ... rest of function
+}
+```
 
 ---
 
@@ -112,4 +138,23 @@ After implementation:
 
 | File | Changes |
 |------|---------|
-| `src/components/charts/RTTChart.tsx` | Disable animations, stable Y-domain, custom dot rendering |
+| `src/lib/ping-simulator.ts` | Add monitoring_mode checks to prevent duplicate samples; add session retry logic; improve logging |
+
+---
+
+## Expected Outcome
+
+After implementation:
+- Completion emails will be sent reliably when jobs complete
+- `real_polling` jobs will not have simulator resume attempts (no duplicate/simulated samples)
+- Better logging will help debug any future email issues
+
+---
+
+## Testing Verification
+
+1. Start a short-duration (1-2 minute) `real_polling` job
+2. Wait for it to complete naturally
+3. Verify the completion email is received
+4. Check console logs for email delivery confirmation
+5. Verify no duplicate samples are created
