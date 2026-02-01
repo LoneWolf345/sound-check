@@ -116,8 +116,13 @@ function calculateOutageMetrics(samples: Sample[]): { outageEventCount: number; 
     return { outageEventCount: 0, longestMissStreak: 0 };
   }
 
-  // Sort by sequence number
-  const sorted = [...samples].sort((a, b) => a.sequence_number - b.sequence_number);
+  // Sort by recorded_at (canonical). sequence_number can reset when poller replicas restart.
+  const sorted = [...samples].sort((a, b) => {
+    const at = new Date(a.recorded_at).getTime();
+    const bt = new Date(b.recorded_at).getTime();
+    if (at !== bt) return at - bt;
+    return a.sequence_number - b.sequence_number;
+  });
 
   let outageEventCount = 0;
   let longestMissStreak = 0;
@@ -145,7 +150,12 @@ function calculateOutageMetrics(samples: Sample[]): { outageEventCount: number; 
 export function shouldTriggerOfflineAlert(samples: Sample[], currentAlertState: 'ok' | 'offline_alerted'): boolean {
   if (currentAlertState === 'offline_alerted') return false;
   
-  const sorted = [...samples].sort((a, b) => a.sequence_number - b.sequence_number);
+  const sorted = [...samples].sort((a, b) => {
+    const at = new Date(a.recorded_at).getTime();
+    const bt = new Date(b.recorded_at).getTime();
+    if (at !== bt) return at - bt;
+    return a.sequence_number - b.sequence_number;
+  });
   const lastFive = sorted.slice(-5);
   
   if (lastFive.length < 5) return false;
@@ -156,7 +166,12 @@ export function shouldTriggerOfflineAlert(samples: Sample[], currentAlertState: 
 export function shouldTriggerRecoveryAlert(samples: Sample[], currentAlertState: 'ok' | 'offline_alerted'): boolean {
   if (currentAlertState !== 'offline_alerted') return false;
   
-  const sorted = [...samples].sort((a, b) => a.sequence_number - b.sequence_number);
+  const sorted = [...samples].sort((a, b) => {
+    const at = new Date(a.recorded_at).getTime();
+    const bt = new Date(b.recorded_at).getTime();
+    if (at !== bt) return at - bt;
+    return a.sequence_number - b.sequence_number;
+  });
   const lastFive = sorted.slice(-5);
   
   if (lastFive.length < 5) return false;
