@@ -35,6 +35,7 @@ import { useCreateJob, checkUsageLimits, checkDuplicateRunningJob } from '@/hook
 import { useAdminConfig } from '@/hooks/use-admin-config';
 import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { startSimulator } from '@/lib/ping-simulator';
+import { startRealPolling } from '@/lib/real-ping-executor';
 
 // Test account number triggers simulated mode
 const TEST_ACCOUNT_NUMBER = '123456789';
@@ -304,8 +305,20 @@ export default function CreateJob() {
         },
       });
 
-      // Start the ping simulator (only for simulated mode - real_polling is handled by OpenShift pod)
-      startSimulator(job.id, data.cadenceSeconds, data.durationMinutes, undefined, monitoringMode);
+      // Start polling based on monitoring mode
+      if (monitoringMode === 'real_polling') {
+        // Start real polling via Latency API
+        await startRealPolling(
+          job.id,
+          data.targetIp,
+          data.cadenceSeconds,
+          data.durationMinutes,
+          job.started_at
+        );
+      } else {
+        // Start simulated polling
+        startSimulator(job.id, data.cadenceSeconds, data.durationMinutes, undefined, monitoringMode);
+      }
 
       toast({
         title: 'Job Created',

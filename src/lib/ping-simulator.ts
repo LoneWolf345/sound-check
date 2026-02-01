@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { SampleStatus } from '@/types';
+import { startRealPolling, isRealPollingActive } from '@/lib/real-ping-executor';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -274,8 +275,23 @@ export async function checkAndCompleteExpiredJobs(): Promise<{ completed: string
       await completeJob(job.id);
       completed.push(job.id);
       console.log(`Auto-completed expired job ${job.id}`);
-    } else if (!isSimulatorRunning(job.id) && job.monitoring_mode !== 'real_polling') {
-      // Job still has time but simulator isn't running - resume it (only for simulated jobs)
+    } else if (job.monitoring_mode === 'real_polling') {
+      // Real polling job - resume via real-ping-executor if not active
+      if (!isRealPollingActive(job.id) && job.target_ip) {
+        const started = await startRealPolling(
+          job.id,
+          job.target_ip,
+          job.cadence_seconds,
+          job.duration_minutes,
+          job.started_at
+        );
+        if (started) {
+          resumed.push(job.id);
+          console.log(`Resumed real polling for job ${job.id}`);
+        }
+      }
+    } else if (!isSimulatorRunning(job.id)) {
+      // Simulated job - resume simulator if not running
       const { data: existingSamples } = await supabase
         .from('samples')
         .select('sequence_number')

@@ -39,6 +39,7 @@ import { createAuditLogEntry } from '@/hooks/use-audit-log';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { stopSimulator, checkAndHandleJob, forceStartSimulator, isSimulatorRunning } from '@/lib/ping-simulator';
+import { startRealPolling, isRealPollingActive, stopRealPolling } from '@/lib/real-ping-executor';
 import { supabase } from '@/integrations/supabase/client';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useQueryClient } from '@tanstack/react-query';
@@ -129,6 +130,26 @@ export default function JobDetail() {
 
     hasCheckedJob.current = true;
     
+    // For real_polling jobs, start/resume real polling if not already active
+    if (job.monitoring_mode === 'real_polling' && job.target_ip && !isRealPollingActive(job.id)) {
+      startRealPolling(
+        job.id,
+        job.target_ip,
+        job.cadence_seconds,
+        job.duration_minutes,
+        job.started_at
+      ).then((started) => {
+        if (started) {
+          toast({
+            title: 'Real Polling Resumed',
+            description: 'ICMP ping monitoring has been resumed for this job.',
+          });
+        }
+      });
+      return;
+    }
+
+    // For simulated jobs, use the existing check and handle logic
     checkAndHandleJob(id).then((result) => {
       if (result === 'completed') {
         toast({
@@ -224,7 +245,12 @@ export default function JobDetail() {
     if (!job || !user) return;
 
     try {
-      stopSimulator(job.id);
+      // Stop the appropriate poller based on monitoring mode
+      if (job.monitoring_mode === 'real_polling') {
+        stopRealPolling(job.id);
+      } else {
+        stopSimulator(job.id);
+      }
       await cancelJobMutation.mutateAsync(job.id);
 
       await createAuditLogEntry({
