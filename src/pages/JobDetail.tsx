@@ -144,7 +144,7 @@ export default function JobDetail() {
             filter: `job_id=eq.${id}`,
           },
           () => {
-            queryClient.invalidateQueries({ queryKey: ['samples', id] });
+            queryClient.invalidateQueries({ queryKey: ['samples', id], exact: false });
           }
         )
         .subscribe();
